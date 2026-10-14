@@ -110,7 +110,7 @@ jobs:
 
       - name: Build Roundtrip
         run: |
-          git clone --depth 1 https://github.com/kodato-is/roundtrip.git /tmp/roundtrip
+          git clone --depth 1 https://github.com/bastaai/roundtrip.git /tmp/roundtrip
           make -C /tmp/roundtrip build
 
       - name: Run requests

@@ -11,17 +11,31 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/bastaai/roundtrip/actions/workflows/ci.yml"><img src="https://github.com/bastaai/roundtrip/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="macOS, Windows and Linux">
+</p>
+
+<p align="center">
   <a href="docs/getting-started.md">Getting started</a> ·
   <a href="docs/README.md">Documentation</a> ·
   <a href="docs/cli.md">CLI</a> ·
-  <a href="docs/development.md">Contributing</a>
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
   <img src="docs/images/app.jpg" alt="Roundtrip showing a collection tree, a request and its JSON response" width="900">
 </p>
 
-## Why Roundtrip
+## Why we built it
+
+At [Basta](https://github.com/bastaai) our services speak HTTP, GraphQL and gRPC, and every engineer keeps a collection of requests to poke at them. We were tired of the tools we used for that. They had grown into heavy applications that wanted an account before you could send a request, synced our collections to someone else's cloud, stored them in formats nobody could review, and treated gRPC and GraphQL as afterthoughts.
+
+What we wanted was simple: a fast, focused client that starts instantly, keeps requests as plain files next to our code, lets us review a changed request in a pull request like any other change, and handles gRPC with our own `.proto` files as well as it handles a REST call.
+
+We could not find that, so we built it, and we are making it open source because we suspect we are not the only ones who want it.
+
+## What makes it different
 
 - **Your requests live in git.** Every request is one readable YAML file. Review changes in a pull request, branch them with your code, and roll them back like anything else.
 - **No account, no cloud.** Roundtrip runs entirely on your machine and saves to a folder you choose. There is nothing to sign in to or connect.
@@ -51,7 +65,7 @@
 Roundtrip is in early development and does not have packaged releases yet. Build it from source:
 
 ```sh
-git clone https://github.com/kodato-is/roundtrip.git
+git clone https://github.com/bastaai/roundtrip.git
 cd roundtrip
 make build
 ```
@@ -131,12 +145,20 @@ The exit status is `0` when everything passed and `1` when a request failed, so 
 
 ## Status
 
-Roundtrip is pre-release software. It is usable day to day, but file formats and commands may still change, and the Windows build has not been tested as thoroughly as macOS. Bug reports and feedback are welcome in [issues](https://github.com/kodato-is/roundtrip/issues).
+Roundtrip is pre-release software. It is usable day to day, but file formats and commands may still change, and the Windows build has not been tested as thoroughly as macOS. Bug reports and feedback are welcome in [issues](https://github.com/bastaai/roundtrip/issues).
+
+## Community
+
+- **Questions and ideas:** [Discussions](https://github.com/bastaai/roundtrip/discussions)
+- **Bugs and feature requests:** [Issues](https://github.com/bastaai/roundtrip/issues)
+- **Security problems:** report them privately, as described in [SECURITY.md](SECURITY.md)
 
 ## Contributing
 
-Contributions are welcome. [Development](docs/development.md) explains how the project is laid out and how to build and test it. For anything larger than a small fix, please open an issue first so the approach can be agreed before you invest time in it.
+Contributions of every size are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up the project, make a change and open a pull request, and [Development](docs/development.md) for how the code is organised. Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Roundtrip is built and maintained by [Basta](https://github.com/bastaai). Changes are listed in the [changelog](CHANGELOG.md).
 
 ## License
 
-Roundtrip is released under the [MIT License](LICENSE).
+Roundtrip is released under the [MIT License](LICENSE). Copyright © 2026 Basta.

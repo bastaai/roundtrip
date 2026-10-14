@@ -1,6 +1,6 @@
 # Development
 
-Thank you for your interest in contributing to Roundtrip.
+This guide explains how Roundtrip is built. For how to propose and submit changes, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Architecture
 

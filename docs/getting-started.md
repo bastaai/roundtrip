@@ -11,7 +11,7 @@ Roundtrip does not have packaged releases yet, so you build it from source. You 
 - git (also used at runtime for syncing with a repository)
 
 ```sh
-git clone https://github.com/kodato-is/roundtrip.git
+git clone https://github.com/bastaai/roundtrip.git
 cd roundtrip
 make build
 ```

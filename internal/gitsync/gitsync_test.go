@@ -59,9 +59,7 @@ func remote(t *testing.T) string {
 func clone(t *testing.T, url string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	if err := Clone(ctx, url, dir); err != nil {
-		t.Fatal(err)
-	}
+	run(t, "", "clone", url, dir)
 	return dir
 }
 
@@ -165,14 +163,5 @@ func TestConflictLeavesWorkspaceIntact(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(bob, ".git", "rebase-merge")); err == nil {
 		t.Fatal("rebase left in progress")
-	}
-}
-
-func TestCloneRejectsSuspiciousAddresses(t *testing.T) {
-	setup(t)
-	for _, url := range []string{"--upload-pack=touch /tmp/x", "ext::sh -c id", "relative/path", ""} {
-		if err := Clone(ctx, url, filepath.Join(t.TempDir(), "x")); err == nil {
-			t.Errorf("Clone(%q) should fail", url)
-		}
 	}
 }

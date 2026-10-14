@@ -23,7 +23,7 @@ func main() {
 	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address")
 	noOpen := flag.Bool("no-open", false, "don't open the browser on start")
-	data := flag.String("data", "", "directory for per-machine data (environments, history, cloned repositories); defaults to the user config directory")
+	data := flag.String("data", "", "directory for per-machine data (environments, history); defaults to the user config directory")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: roundtrip [flags] [workspace]\n       roundtrip run [flags] [path ...]\n\nWithout a command the app starts and opens in the browser. workspace is the\ndirectory (usually a git repo) holding collections/. Defaults to the one\nopened last, then the current directory.\n\n`roundtrip run` runs requests and their tests in the terminal; see\n`roundtrip run -h`.\n\n")
 		flag.PrintDefaults()

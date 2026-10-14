@@ -180,3 +180,13 @@ func NewID() string {
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+// GRPCMethod describes one gRPC method for the request editor.
+type GRPCMethod struct {
+	// Input and Output are the full names of the request and response messages.
+	Input     string `json:"input"`
+	Output    string `json:"output"`
+	Streaming bool   `json:"streaming"`
+	// Template is an example request message as JSON, every field present.
+	Template string `json:"template"`
+}

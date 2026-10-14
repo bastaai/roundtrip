@@ -81,7 +81,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func TestConnectRepositoryAndSync(t *testing.T) {
+func TestOpenRepositoryFolderAndSync(t *testing.T) {
 	if !gitsync.Available() {
 		t.Skip("git not installed")
 	}
@@ -101,16 +101,18 @@ func TestConnectRepositoryAndSync(t *testing.T) {
 		t.Fatalf("fresh workspace: %#v", info)
 	}
 
-	// A collection made before connecting is carried into the new repository,
-	// and the environments follow on this machine without entering it.
+	// A collection made elsewhere is carried into the repository folder, and
+	// the environments follow on this machine without entering it.
 	c.do("PUT", "/api/collections/c1", model.Collection{Name: "API", Items: []*model.Item{{ID: "r1", Name: "Ping", Request: &model.Request{Method: "GET", URL: "http://x"}}}}, nil)
 	c.do("PUT", "/api/environments/e1", model.Environment{Name: "dev", Variables: []model.KV{{Key: "token", Value: "hunter2", Enabled: true, Secret: true}}}, nil)
 
-	if code := c.do("POST", "/api/workspace/connect", map[string]string{"url": remote}, &info); code != 200 {
-		t.Fatalf("connect: %d", code)
+	repo := filepath.Join(t.TempDir(), "requests")
+	git(t, "", "clone", remote, repo)
+	if code := c.do("POST", "/api/workspace/open", map[string]any{"path": repo, "carry": true}, &info); code != 200 {
+		t.Fatalf("open: %d", code)
 	}
-	if !info.Git.Repo || info.Git.Remote != remote || !strings.HasSuffix(info.Path, filepath.Join("repos", "acme-requests")) {
-		t.Fatalf("after connect: %#v", info)
+	if !info.Git.Repo || info.Git.Remote != remote || mustEval(t, info.Path) != mustEval(t, repo) {
+		t.Fatalf("after open: %#v", info)
 	}
 	if len(info.Git.Changes) != 2 {
 		t.Fatalf("carried-over collection should show as uncommitted: %#v", info.Git.Changes)
@@ -118,12 +120,12 @@ func TestConnectRepositoryAndSync(t *testing.T) {
 	var cols []model.Collection
 	c.do("GET", "/api/collections", nil, &cols)
 	if len(cols) != 1 || cols[0].Name != "API" {
-		t.Fatalf("collections after connect: %#v", cols)
+		t.Fatalf("collections after open: %#v", cols)
 	}
 	var envs []model.Environment
 	c.do("GET", "/api/environments", nil, &envs)
 	if len(envs) != 1 || envs[0].ID != "e1" || envs[0].Variables[0].Value != "hunter2" {
-		t.Fatalf("environments after connect: %#v", envs)
+		t.Fatalf("environments after open: %#v", envs)
 	}
 	if _, err := os.Stat(filepath.Join(info.Path, "environments")); err == nil {
 		t.Fatal("environments were written into the repository")
@@ -154,8 +156,15 @@ func TestConnectRepositoryAndSync(t *testing.T) {
 		t.Fatalf("pulled request missing: %#v", cols[0].Items)
 	}
 
-	if code := c.do("POST", "/api/workspace/connect", map[string]string{"url": "--upload-pack=x"}, nil); code != 502 {
-		t.Fatalf("bad url: %d", code)
+	// Opening a folder that already has collections never overwrites them.
+	other := setup(t)
+	other.do("PUT", "/api/collections/c9", model.Collection{Name: "Other"}, nil)
+	if code := other.do("POST", "/api/workspace/open", map[string]any{"path": repo, "carry": true}, nil); code != 200 {
+		t.Fatalf("open existing: %d", code)
+	}
+	other.do("GET", "/api/collections", nil, &cols)
+	if len(cols) != 1 || cols[0].Name != "API" {
+		t.Fatalf("existing collections were replaced: %#v", cols)
 	}
 	if code := c.do("POST", "/api/workspace/open", map[string]string{"path": "relative"}, nil); code != 400 {
 		t.Fatalf("relative path: %d", code)
@@ -187,6 +196,47 @@ func TestOpenWorkspaceIsRemembered(t *testing.T) {
 	}
 }
 
+func TestRecentWorkspaces(t *testing.T) {
+	static := fstest.MapFS{"index.html": {Data: []byte("ui")}}
+	first, second, third := t.TempDir(), t.TempDir(), t.TempDir()
+	data := t.TempDir()
+	h, err := New(Config{Workspace: first, DataDir: data, Static: static})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	c := client{t, srv.URL, data}
+
+	var info workspaceInfo
+	c.do("GET", "/api/workspace", nil, &info)
+	if info.Recent == nil || len(info.Recent) != 0 {
+		t.Fatalf("a first workspace has no others to switch to: %#v", info.Recent)
+	}
+
+	for _, dir := range []string{second, third, second} {
+		if code := c.do("POST", "/api/workspace/open", map[string]string{"path": dir}, &info); code != 200 {
+			t.Fatalf("open %s: %d", dir, code)
+		}
+	}
+	// Newest first, the current workspace excluded, no duplicates.
+	want := []string{mustEval(t, third), mustEval(t, first)}
+	got := []string{}
+	for _, p := range info.Recent {
+		got = append(got, mustEval(t, p))
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("recent = %q, want %q", got, want)
+	}
+
+	// A folder that no longer exists is not offered.
+	os.RemoveAll(third)
+	c.do("GET", "/api/workspace", nil, &info)
+	if len(info.Recent) != 1 || mustEval(t, info.Recent[0]) != mustEval(t, first) {
+		t.Fatalf("recent after delete = %q", info.Recent)
+	}
+}
+
 func mustEval(t *testing.T, p string) string {
 	t.Helper()
 	out, err := filepath.EvalSymlinks(p)
@@ -194,21 +244,6 @@ func mustEval(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return out
-}
-
-func TestRepoDir(t *testing.T) {
-	cases := map[string]string{
-		"https://github.com/acme/api-requests.git": "acme-api-requests",
-		"git@github.com:acme/api-requests.git":     "acme-api-requests",
-		"https://github.com/acme/api-requests/":    "acme-api-requests",
-		"ssh://git@host:22/team/sub/repo":          "sub-repo",
-		"../..":                                    "repo",
-	}
-	for in, want := range cases {
-		if got := repoDir(in); got != want {
-			t.Errorf("repoDir(%q) = %q, want %q", in, got, want)
-		}
-	}
 }
 
 func TestCollectionAndEnvironmentCRUD(t *testing.T) {

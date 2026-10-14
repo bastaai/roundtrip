@@ -121,21 +121,6 @@ func GetStatus(ctx context.Context, dir string) (Status, error) {
 	return st, nil
 }
 
-// Clone rejects anything that isn't a plain repository address, since the
-// address ends up on a git command line.
-func Clone(ctx context.Context, url, dir string) error {
-	url = strings.TrimSpace(url)
-	ok := filepath.IsAbs(url)
-	for _, prefix := range []string{"https://", "http://", "ssh://", "git@"} {
-		ok = ok || strings.HasPrefix(url, prefix)
-	}
-	if !ok {
-		return errors.New("repository must be an https://, ssh:// or git@ address")
-	}
-	_, err := git(ctx, "", "clone", "--", url, dir)
-	return err
-}
-
 // Pull rebases local commits onto the remote. Conflicts abort the rebase and
 // leave the workspace as it was.
 func Pull(ctx context.Context, dir string) error {

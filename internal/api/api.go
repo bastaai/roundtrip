@@ -4,7 +4,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"maps"
 	"net"
@@ -12,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +28,7 @@ type Config struct {
 	// Workspace is the directory opened at start.
 	Workspace string
 	// DataDir holds everything per-machine: the last opened workspace,
-	// environments and history per workspace, and repositories cloned from the UI.
+	// and the environments and history of each workspace.
 	DataDir string
 	Static  fs.FS
 }
@@ -51,16 +49,30 @@ type workspaceInfo struct {
 	Path         string         `json:"path"`
 	GitAvailable bool           `json:"gitAvailable"`
 	Git          gitsync.Status `json:"git"`
+	// Recent lists other workspaces opened on this machine, newest first.
+	Recent []string `json:"recent"`
+}
+
+// recentLimit is how many workspaces are remembered for quick switching.
+const recentLimit = 10
+
+// config is the per-machine config.json: the workspace to reopen and the
+// ones opened before it, newest first (the current one included).
+type config struct {
+	Workspace string   `json:"workspace"`
+	Recent    []string `json:"recent,omitempty"`
+}
+
+func readConfig(dataDir string) config {
+	var cfg config
+	data, _ := os.ReadFile(filepath.Join(dataDir, "config.json"))
+	json.Unmarshal(data, &cfg)
+	return cfg
 }
 
 // LastWorkspace is the workspace that was open when the app last ran, or "".
 func LastWorkspace(dataDir string) string {
-	var cfg struct {
-		Workspace string `json:"workspace"`
-	}
-	data, _ := os.ReadFile(filepath.Join(dataDir, "config.json"))
-	json.Unmarshal(data, &cfg)
-	return cfg.Workspace
+	return readConfig(dataDir).Workspace
 }
 
 // open switches the server to a workspace directory and remembers it.
@@ -76,7 +88,13 @@ func (s *server) open(dir string) error {
 	s.mu.Lock()
 	s.workspace, s.store, s.runtime = dir, st, map[string]string{}
 	s.mu.Unlock()
-	data, _ := json.Marshal(map[string]string{"workspace": dir})
+	cfg := config{Workspace: dir, Recent: []string{dir}}
+	for _, p := range readConfig(s.cfg.DataDir).Recent {
+		if p != dir && len(cfg.Recent) < recentLimit {
+			cfg.Recent = append(cfg.Recent, p)
+		}
+	}
+	data, _ := json.Marshal(cfg)
 	return os.WriteFile(filepath.Join(s.cfg.DataDir, "config.json"), data, 0o600)
 }
 
@@ -94,63 +112,35 @@ func (s *server) dir() string {
 
 func (s *server) info(ctx context.Context) (workspaceInfo, error) {
 	st, err := gitsync.GetStatus(ctx, s.dir())
-	return workspaceInfo{Path: s.dir(), GitAvailable: gitsync.Available(), Git: st}, err
+	// Folders that have since been moved or deleted are not offered.
+	recent := []string{}
+	for _, p := range readConfig(s.cfg.DataDir).Recent {
+		if info, statErr := os.Stat(p); p != s.dir() && statErr == nil && info.IsDir() {
+			recent = append(recent, p)
+		}
+	}
+	return workspaceInfo{Path: s.dir(), GitAvailable: gitsync.Available(), Git: st, Recent: recent}, err
 }
 
-var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
-
-// repoDir turns git@github.com:acme/api-requests.git into "acme-api-requests".
-func repoDir(url string) string {
-	url = strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(url), "/"), ".git")
-	parts := strings.FieldsFunc(url, func(r rune) bool { return r == '/' || r == ':' || r == '\\' })
-	if len(parts) > 2 {
-		parts = parts[len(parts)-2:]
-	}
-	name := strings.Trim(unsafeName.ReplaceAllString(strings.Join(parts, "-"), "-"), "-.")
-	if name == "" {
-		name = "repo"
-	}
-	return name
-}
-
-// connect clones a repository (or reuses an earlier clone) and makes it the
-// workspace. Collections created before connecting are carried over when the
-// repository doesn't have any yet, and so are the environments of the previous
-// workspace when the new one has none on this machine.
-func (s *server) connect(ctx context.Context, url string) error {
-	url = strings.TrimSpace(url)
-	target := filepath.Join(s.cfg.DataDir, "repos", repoDir(url))
-	if gitsync.IsRepo(ctx, target) {
-		st, err := gitsync.GetStatus(ctx, target)
-		if err != nil {
-			return err
-		}
-		if st.Remote != url {
-			return fmt.Errorf("%s is already a clone of %s", target, st.Remote)
-		}
-		if err := gitsync.Pull(ctx, target); err != nil {
-			return err
-		}
-	} else {
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return err
-		}
-		if err := gitsync.Clone(ctx, url, target); err != nil {
-			return err
-		}
-	}
-
+// openWorkspace switches to dir. With carry, a folder that has no collections
+// yet receives a copy of the current ones, and the current environments
+// follow on this machine when the new workspace has none; this is how
+// requests started elsewhere are moved into a repository folder.
+func (s *server) openWorkspace(dir string, carry bool) error {
 	prev, prevStore := s.dir(), s.st()
-	_, err := os.Stat(filepath.Join(target, "collections"))
-	carry := err != nil && !gitsync.IsRepo(ctx, prev)
+	if carry {
+		if _, err := os.Stat(filepath.Join(dir, "collections")); err == nil {
+			carry = false
+		}
+	}
 	if carry {
 		if _, err := os.Stat(filepath.Join(prev, "collections")); err == nil {
-			if err := os.CopyFS(filepath.Join(target, "collections"), os.DirFS(filepath.Join(prev, "collections"))); err != nil {
+			if err := os.CopyFS(filepath.Join(dir, "collections"), os.DirFS(filepath.Join(prev, "collections"))); err != nil {
 				return err
 			}
 		}
 	}
-	if err := s.open(target); err != nil {
+	if err := s.open(dir); err != nil {
 		return err
 	}
 	if !carry {
@@ -178,12 +168,14 @@ func New(cfg Config) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/fs/list", s.listDir)
 	mux.HandleFunc("GET /api/workspace", func(w http.ResponseWriter, r *http.Request) {
 		respond(w)(s.info(r.Context()))
 	})
 	mux.HandleFunc("POST /api/workspace/open", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Path string `json:"path"`
+			Path  string `json:"path"`
+			Carry bool   `json:"carry"`
 		}
 		if !decode(w, r, &in) {
 			return
@@ -192,7 +184,7 @@ func New(cfg Config) (http.Handler, error) {
 			http.Error(w, "enter the full path of a folder", http.StatusBadRequest)
 			return
 		}
-		if err := s.open(in.Path); err != nil {
+		if err := s.openWorkspace(filepath.Clean(in.Path), in.Carry); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -215,15 +207,6 @@ func New(cfg Config) (http.Handler, error) {
 			respond(w)(s.info(ctx))
 		}
 	}
-	mux.HandleFunc("POST /api/workspace/connect", gitAction(func(ctx context.Context, r *http.Request) error {
-		var in struct {
-			URL string `json:"url"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			return err
-		}
-		return s.connect(ctx, in.URL)
-	}))
 	mux.HandleFunc("POST /api/git/sync", gitAction(func(ctx context.Context, r *http.Request) error {
 		var in struct {
 			Message string `json:"message"`
@@ -309,6 +292,31 @@ func New(cfg Config) (http.Handler, error) {
 		respond(w)(map[string]string{"command": curl.Export(sender.ResolveRequest(in.Request, vars))}, err)
 	})
 
+	mux.HandleFunc("POST /api/grpc/describe", func(w http.ResponseWriter, r *http.Request) {
+		var in sendInput
+		if !decode(w, r, &in) {
+			return
+		}
+		dir := s.dir()
+		vars, err := s.vars(in.EnvironmentID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		method, err := grpcclient.Describe(ctx, in.Request, vars, grpcclient.Protos{Config: in.Proto, Workspace: dir})
+		if err != nil {
+			// With proto files the server is not involved: the config or the method name is wrong.
+			code := http.StatusBadGateway
+			if !in.Proto.Empty() {
+				code = http.StatusBadRequest
+			}
+			http.Error(w, err.Error(), code)
+			return
+		}
+		respond(w)(method, nil)
+	})
 	mux.HandleFunc("POST /api/grpc/methods", func(w http.ResponseWriter, r *http.Request) {
 		var in sendInput
 		if !decode(w, r, &in) {

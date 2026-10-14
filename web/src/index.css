@@ -1,0 +1,242 @@
+@import "tailwindcss";
+
+/*
+ * Every color in the UI comes from the tokens below: light-dark(<light>, <dark>).
+ * The scheme follows the OS; data-theme="light" | "dark" on <html> forces one.
+ */
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(#ffffff, #131417);
+  --panel: light-dark(#f6f6f8, #18191d);
+  --raised: light-dark(#ffffff, #1d1f24);
+  --hover: light-dark(#ececf0, #24262c);
+  --active: light-dark(#e2e3e9, #2c2f37);
+  --line: light-dark(#e2e3e8, #2a2c33);
+  --line-strong: light-dark(#cbcdd5, #3b3e48);
+  --fg: light-dark(#1b1d22, #e6e7ea);
+  --muted: light-dark(#636874, #9499a5);
+  --faint: light-dark(#9a9ea8, #636873);
+
+  /* Neutral accent: the primary button, checked boxes, the active-tab underline. */
+  --accent: light-dark(#18181b, #ededef);
+  --accent-hover: light-dark(#34343a, #ffffff);
+  --accent-fg: light-dark(#ffffff, #111113);
+  /* Keyboard focus and text selection only: a cool slate, never a brand colour. */
+  --focus: light-dark(#5a6b8f, #8d9dc0);
+
+  /* Colour is reserved for meaning: outcome of a request, test or sync. */
+  --ok: light-dark(#1f7a41, #5cc181);
+  --warn: light-dark(#856a14, #cdb46a);
+  --danger: light-dark(#c2343c, #ee7b78);
+  --info: light-dark(#3a6cb0, #82b0e8);
+
+  /* Method labels: quiet and desaturated, one hue each; GET, the most common, is nearly neutral. */
+  --m-get: light-dark(#5a6a84, #9ba8be);
+  --m-post: light-dark(#2f7d57, #7fc29b);
+  --m-put: light-dark(#6257b5, #a7a0ea);
+  --m-patch: light-dark(#3a6fb8, #7fb2ea);
+  --m-delete: light-dark(#b8454a, #e58a8a);
+  --m-graphql: light-dark(#94489c, #cf93d6);
+  --m-grpc: light-dark(#1f7a80, #6fc1c4);
+
+  --json-key: light-dark(#3d5f94, #9bb6de);
+  --json-str: light-dark(#2f7350, #9ccba8);
+  --json-num: light-dark(#6a55b0, #b9a9ec);
+  --json-lit: light-dark(#a8457a, #e39abb);
+
+  --overlay: light-dark(rgb(20 22 28 / 0.35), rgb(0 0 0 / 0.45));
+  --shadow: light-dark(rgb(20 22 28 / 0.18), rgb(0 0 0 / 0.6));
+  --scroll: light-dark(#c9ccd4, #3a3d47);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-focus: var(--focus);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-m-get: var(--m-get);
+  --color-m-post: var(--m-post);
+  --color-m-put: var(--m-put);
+  --color-m-patch: var(--m-patch);
+  --color-m-delete: var(--m-delete);
+  --color-m-graphql: var(--m-graphql);
+  --color-m-grpc: var(--m-grpc);
+  --color-overlay: var(--overlay);
+
+  --shadow-pop: 0 0 0 1px var(--line), 0 16px 48px -12px var(--shadow), 0 4px 12px -4px var(--shadow);
+  --shadow-seg: 0 0 0 1px var(--line), 0 1px 2px var(--shadow);
+  --shadow-focus: inset 0 0 0 1px var(--focus);
+}
+
+@theme {
+  /* SF on macOS, Segoe UI Variable on Windows 11, Segoe UI on Windows 10. */
+  --font-sans: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Cascadia Mono", Consolas, Menlo, monospace;
+
+  --animate-fade: fade 120ms ease-out;
+  --animate-pop: pop 140ms ease-out;
+  --animate-toast: toast 150ms ease-out;
+  --animate-progress: progress 1.1s ease-in-out infinite;
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.985);
+    }
+  }
+  @keyframes toast {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @keyframes progress {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(350%);
+    }
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.4;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Thin themed scrollbars: Windows shows them all the time. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll) transparent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--focus) 32%, transparent);
+  }
+
+  button,
+  select,
+  [role="button"],
+  [role="tab"] {
+    cursor: pointer;
+  }
+  button:disabled,
+  select:disabled {
+    cursor: default;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+
+  /* The popup list is drawn by the OS; on Windows it inherits these. */
+  option,
+  optgroup {
+    background: var(--raised);
+    color: var(--fg);
+    font-weight: 400;
+  }
+
+  textarea {
+    tab-size: 2;
+    line-height: 1.55;
+  }
+
+  input[type="checkbox"] {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--raised);
+    cursor: pointer;
+    transition:
+      background-color 100ms ease-out,
+      border-color 100ms ease-out;
+  }
+  input[type="checkbox"]::after {
+    content: "";
+    width: 8px;
+    height: 4.5px;
+    border-left: 1.5px solid var(--accent-fg);
+    border-bottom: 1.5px solid var(--accent-fg);
+    transform: translateY(-1px) rotate(-45deg);
+    opacity: 0;
+  }
+  input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  input[type="checkbox"]:checked::after {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+.json-key { color: var(--json-key); }
+.json-str { color: var(--json-str); }
+.json-num { color: var(--json-num); }
+.json-lit { color: var(--json-lit); }
+
+/* Native macOS window without a title bar (set in main.tsx). */
+[data-shell='mac'] header {
+  padding-left: 104px;
+  --wails-draggable: drag;
+}
+[data-shell='mac'] header :is(button, select, input, a, [role='button']) {
+  --wails-draggable: no-drag;
+}

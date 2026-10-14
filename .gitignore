@@ -1,0 +1,9 @@
+/roundtrip
+/dist
+/workspace
+/web/node_modules
+/web/dist
+
+# Local Claude Code files
+/CLAUDE.md
+/.claude/

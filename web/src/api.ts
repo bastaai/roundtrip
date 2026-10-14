@@ -1,0 +1,44 @@
+import { normalizeProto } from './lib/proto';
+import type { Collection, Environment, HistoryEntry, ProtoCheck, ProtoConfig, Req, Res, Workspace } from './types';
+
+async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch('/api' + path, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.text()).trim() || res.statusText);
+  return res.status === 204 ? (undefined as T) : res.json();
+}
+
+export const api = {
+  collections: () => call<Collection[]>('GET', '/collections'),
+  putCollection: (c: Collection) => call<Collection>('PUT', `/collections/${c.id}`, c),
+  deleteCollection: (id: string) => call<void>('DELETE', `/collections/${id}`),
+
+  environments: () => call<Environment[]>('GET', '/environments'),
+  putEnvironment: (e: Environment) => call<Environment>('PUT', `/environments/${e.id}`, e),
+  deleteEnvironment: (id: string) => call<void>('DELETE', `/environments/${id}`),
+
+  workspace: () => call<Workspace>('GET', '/workspace'),
+  openWorkspace: (path: string) => call<Workspace>('POST', '/workspace/open', { path }),
+  connectRepo: (url: string) => call<Workspace>('POST', '/workspace/connect', { url }),
+  gitSync: (message: string) => call<Workspace>('POST', '/git/sync', { message }),
+  gitPull: () => call<Workspace>('POST', '/git/pull', {}),
+
+  runtimeVariables: () => call<Record<string, string>>('GET', '/variables/runtime'),
+  clearRuntimeVariables: () => call<void>('DELETE', '/variables/runtime'),
+
+  history: () => call<HistoryEntry[]>('GET', '/history'),
+  clearHistory: () => call<void>('DELETE', '/history'),
+
+  // proto is the config of the request's collection; it is left out of the body when empty.
+  send: (request: Req, environmentId: string, proto?: ProtoConfig) =>
+    call<Res>('POST', '/send', { request, environmentId, proto: normalizeProto(proto) }),
+  grpcMethods: (request: Req, environmentId: string, proto?: ProtoConfig) =>
+    call<string[]>('POST', '/grpc/methods', { request, environmentId, proto: normalizeProto(proto) }),
+  checkProto: (proto: ProtoConfig, environmentId: string) => call<ProtoCheck>('POST', '/proto/check', { proto, environmentId }),
+  parseCurl: (command: string) => call<Req>('POST', '/curl/parse', { command }),
+  exportCurl: (request: Req, environmentId: string) =>
+    call<{ command: string }>('POST', '/curl/export', { request, environmentId }).then((r) => r.command),
+};

@@ -1,7 +1,9 @@
 package store
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -24,7 +26,7 @@ func open(t *testing.T) (*Store, string, string) {
 }
 
 func req(url string) *model.Request {
-	return &model.Request{Method: "GET", URL: url, Headers: []model.KV{{Key: "Accept", Value: "*/*", Enabled: true}}, Auth: model.Auth{Type: "none"}, Body: model.Body{Mode: "none"}}
+	return &model.Request{Method: "GET", URL: url, Headers: []model.KV{{Key: "Accept", Value: "*/*", Enabled: true}}}
 }
 
 // tree lists every file under dir, relative and slash-separated.
@@ -250,6 +252,7 @@ func TestRequestFileIsReadableYAML(t *testing.T) {
 		Body:    model.Body{Mode: "raw", ContentType: "application/json", Raw: "{\n  \"user\": \"ada\",\n  \"roles\": [\"admin\"]\n}"},
 		Tests:   []model.Assertion{{Target: "status", Op: "eq", Value: "200"}, {Target: "body.token", Op: "exists"}},
 		Extract: []model.Extract{{Var: "token", From: "body.token"}},
+		Docs:    "Signs in and saves the session token.\nNeeds an active user.",
 	}
 	gql := &model.Request{Method: "POST", URL: "https://x/graphql", Body: model.Body{Mode: "graphql", Raw: "query Q($id: ID!) {\n  user(id: $id) { name }\n}\n", Variables: "{\n  \"id\": \"1\"\n}"}}
 	c := &model.Collection{ID: "c1", Name: "API", Items: []*model.Item{
@@ -294,6 +297,9 @@ tests:
 extract:
   - var: token
     from: body.token
+docs: |-
+  Signs in and saves the session token.
+  Needs an active user.
 `,
 		"GraphQL.yaml": `id: r0
 name: GraphQL
@@ -419,6 +425,31 @@ func TestRandomStringsRoundTrip(t *testing.T) {
 
 // Multi-line text is written as a block scalar wherever YAML can represent it
 // that way, so a body diffs line by line.
+// What the editor fills in by default is not written to the file.
+func TestDefaultsAreNotWritten(t *testing.T) {
+	s, dir, _ := open(t)
+	r := &model.Request{
+		Method: "GET",
+		URL:    "https://x/y",
+		Auth:   model.Auth{Type: "none", In: "header"},
+		Body:   model.Body{Mode: "none", ContentType: "application/json"},
+	}
+	key := &model.Request{Method: "GET", URL: "https://x/y", Auth: model.Auth{Type: "apikey", Key: "X-Key", Value: "{{key}}", In: "header"}}
+	c := &model.Collection{ID: "c1", Name: "API", Items: []*model.Item{{ID: "r1", Name: "Plain", Request: r}, {ID: "r2", Name: "Key", Request: key}}}
+	if err := s.SaveCollection(c); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"Plain.yaml": "id: r1\nname: Plain\nmethod: GET\nurl: https://x/y\n",
+		"Key.yaml":   "id: r2\nname: Key\nmethod: GET\nurl: https://x/y\nauth:\n  type: apikey\n  key: X-Key\n  value: '{{key}}'\n",
+	} {
+		got, _ := os.ReadFile(filepath.Join(dir, "collections", "API", name))
+		if string(got) != want {
+			t.Errorf("%s:\n%s\nwant:\n%s", name, got, want)
+		}
+	}
+}
+
 func TestMultiLineBodiesAreBlockScalars(t *testing.T) {
 	s, dir, _ := open(t)
 	cases := map[string]bool{
@@ -477,10 +508,43 @@ func TestHandWrittenYAMLIsRead(t *testing.T) {
 	}
 }
 
+func TestHistoryKeepsResponses(t *testing.T) {
+	s, _, local := open(t)
+	s.AddHistory(&model.HistoryEntry{ID: "a1"}, &model.Response{Status: 200, Body: `{"ok":true}`})
+	s.AddHistory(&model.HistoryEntry{ID: "b2"}, &model.Response{Status: 200, Body: strings.Repeat("x", keptBodyLimit+1), Size: keptBodyLimit + 1})
+
+	if res, err := s.HistoryResponse("a1"); err != nil || res.Body != `{"ok":true}` || res.BodyNotKept {
+		t.Fatalf("small response: %+v %v", res, err)
+	}
+	if res, err := s.HistoryResponse("b2"); err != nil || res.Body != "" || !res.BodyNotKept || res.Size != keptBodyLimit+1 {
+		t.Fatalf("large response: %+v %v", res, err)
+	}
+	for _, id := range []string{"c3", "../history", ""} {
+		if _, err := s.HistoryResponse(id); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%q: %v, want not exist", id, err)
+		}
+	}
+
+	// Entries that fall off the end take their response with them.
+	for i := range historyLimit {
+		s.AddHistory(&model.HistoryEntry{ID: fmt.Sprintf("%x", 0x100+i)}, &model.Response{})
+	}
+	if _, err := s.HistoryResponse("a1"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("pruned response still there: %v", err)
+	}
+	if files, _ := os.ReadDir(filepath.Join(local, "responses")); len(files) != historyLimit {
+		t.Fatalf("%d response files, want %d", len(files), historyLimit)
+	}
+	s.ClearHistory()
+	if _, err := os.Stat(filepath.Join(local, "responses")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("responses not cleared")
+	}
+}
+
 func TestHistoryIsLocalNewestFirstAndCapped(t *testing.T) {
 	s, dir, _ := open(t)
 	for i := range historyLimit + 5 {
-		s.AddHistory(&model.HistoryEntry{ID: fmt.Sprint(i)})
+		s.AddHistory(&model.HistoryEntry{ID: fmt.Sprint(i)}, nil)
 	}
 	h, _ := s.History()
 	if len(h) != historyLimit || h[0].ID != fmt.Sprint(historyLimit+4) {

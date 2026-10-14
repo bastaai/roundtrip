@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react';
 import { emptyRequest, uid } from '../lib/request';
-import { addItem, filterCollections, isFolder, mapItem, removeItem } from '../lib/tree';
+import { addItem, filterCollections, isFolder, mapItem, moveItem, removeItem } from '../lib/tree';
 import type { Collection, HistoryEntry, Item } from '../types';
-import { btnCls, ghostBtnCls, Icon, IconButton, Method, statusColor, Tabs } from './ui';
+import { btnCls, Confirm, ghostBtnCls, Icon, IconButton, Method, statusColor, Tabs } from './ui';
 
 type Props = {
   width: number;
@@ -13,6 +13,8 @@ type Props = {
   onOpen: (collection: Collection, item: Item) => void;
   onOpenHistory: (entry: HistoryEntry) => void;
   onChange: (collection: Collection) => void;
+  // A request or folder was dragged elsewhere; changed is what moveItem returned.
+  onMove: (changed: Collection[], itemId: string) => void;
   onDelete: (id: string) => void;
   onProto: (collection: Collection) => void;
   onClearHistory: () => void;
@@ -24,7 +26,11 @@ export function Sidebar(p: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [asking, setAsking] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
+  // What is being dragged, and the folder or collection it would land in ("collection/folder").
+  const [dragging, setDragging] = useState<{ from: string; id: string } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
   const filtering = filter.trim() !== '';
   // Only what is drawn is narrowed; every change is made to the full collection.
   const shown = filterCollections(p.collections, filter);
@@ -57,12 +63,60 @@ export function Sidebar(p: Props) {
     if (!folder) p.onOpen(next, item);
   };
 
+  const endDrag = () => {
+    setDragging(null);
+    setOver(null);
+  };
+
+  // A folder or collection, with everything drawn inside it, takes drops for itself:
+  // dropping on a request moves the dragged item next to it.
+  const dropZone = (c: Collection, into: string | null) => {
+    const key = `${c.id}/${into ?? ''}`;
+    const move = () => {
+      const from = dragging && p.collections.find((x) => x.id === dragging.from);
+      return from ? moveItem(from, c, dragging.id, into) : null;
+    };
+    return {
+      className: `rounded-md ${over === key ? 'bg-hover' : ''}`,
+      onDragOver: (e: React.DragEvent) => {
+        if (!dragging) return;
+        e.stopPropagation();
+        if (!move()) return setOver(null);
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        setOver(key);
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const changed = move();
+        if (changed && dragging) {
+          p.onMove(changed, dragging.id);
+          setOpen(into ?? c.id, true);
+        }
+        endDrag();
+      },
+    };
+  };
+
+  const dragProps = (c: Collection, item: Item) => ({
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.name);
+      setDragging({ from: c.id, id: item.id });
+    },
+    onDragEnd: endDrag,
+  });
+
   const renderItems = (c: Collection, items: Item[], depth: number) =>
     items.map((item) => {
       const rename = (name: string) => p.onChange({ ...c, items: mapItem(c.items, item.id, (it) => ({ ...it, name })) });
-      const remove = () => {
-        if (confirm(`Delete "${item.name}"?`)) p.onChange({ ...c, items: removeItem(c.items, item.id) });
-      };
+      const remove = () =>
+        setAsking({
+          title: isFolder(item) ? 'Delete folder' : 'Delete request',
+          message: isFolder(item) ? `Delete "${item.name}" and everything in it?` : `Delete "${item.name}"?`,
+          onConfirm: () => p.onChange({ ...c, items: removeItem(c.items, item.id) }),
+        });
       if (!isFolder(item)) {
         return (
           <Row
@@ -76,6 +130,7 @@ export function Sidebar(p: Props) {
             onRenameStart={() => setRenaming(item.id)}
             onRenameDone={() => setRenaming(null)}
             onClick={() => p.onOpen(c, item)}
+            drag={dragProps(c, item)}
             actions={
               <>
                 <IconButton icon="pencil" title="Rename (F2)" onClick={() => setRenaming(item.id)} />
@@ -88,9 +143,10 @@ export function Sidebar(p: Props) {
       const open = isOpen(item.id);
       const children = item.items ?? [];
       return (
-        <div key={item.id}>
+        <div key={item.id} {...dropZone(c, item.id)}>
           <Row
             depth={depth}
+            drag={dragProps(c, item)}
             name={item.name}
             lead={<Chevron open={open} />}
             expanded={open}
@@ -162,7 +218,7 @@ export function Sidebar(p: Props) {
             {filter && <IconButton icon="x" title="Clear filter (Esc)" onClick={() => setFilter('')} />}
           </label>
         )}
-        <div ref={treeRef} className="flex-1 overflow-auto p-1.5" data-tree>
+        <div ref={treeRef} className="flex-1 select-none overflow-auto p-1.5" data-tree onDragOver={() => setOver(null)}>
           {filtering && shown.length === 0 && (
             <p className="break-words px-1.5 py-2.5 text-muted">Nothing matches “{filter.trim()}”.</p>
           )}
@@ -178,7 +234,7 @@ export function Sidebar(p: Props) {
             const c = p.collections.find((x) => x.id === visible.id) ?? visible;
             const open = isOpen(c.id);
             return (
-              <div key={c.id}>
+              <div key={c.id} {...dropZone(c, null)}>
                 <Row
                   depth={0}
                   name={c.name}
@@ -200,7 +256,13 @@ export function Sidebar(p: Props) {
                         icon="trash"
                         title="Delete collection"
                         danger
-                        onClick={() => confirm(`Delete collection "${c.name}" and everything in it?`) && p.onDelete(c.id)}
+                        onClick={() =>
+                          setAsking({
+                            title: 'Delete collection',
+                            message: `Delete "${c.name}" and everything in it?`,
+                            onConfirm: () => p.onDelete(c.id),
+                          })
+                        }
                       />
                     </>
                   }
@@ -212,7 +274,7 @@ export function Sidebar(p: Props) {
         </div>
         </>
       ) : (
-        <div className="flex-1 overflow-auto p-1.5">
+        <div className="flex-1 select-none overflow-auto p-1.5">
           {p.history.length === 0 ? (
             <p className="px-1.5 py-2.5 text-muted">Requests you send show up here. History is kept on this machine only.</p>
           ) : (
@@ -240,6 +302,7 @@ export function Sidebar(p: Props) {
           ))}
         </div>
       )}
+      {asking && <Confirm {...asking} action="Delete" onClose={() => setAsking(null)} />}
     </aside>
   );
 }
@@ -280,6 +343,8 @@ type RowProps = {
   onRenameStart: () => void;
   onRenameDone: () => void;
   onClick: () => void;
+  // set for requests and folders, which can be dragged into another folder or collection
+  drag?: { onDragStart: (e: React.DragEvent) => void; onDragEnd: () => void };
 };
 
 function Row(p: RowProps) {
@@ -318,13 +383,15 @@ function Row(p: RowProps) {
       }`}
       onClick={p.onClick}
       onKeyDown={onKeyDown}
+      draggable={!!p.drag && !p.renaming}
+      {...(p.renaming ? {} : p.drag)}
     >
       <Indent depth={p.depth} />
       {p.lead}
       {p.renaming ? (
         <input
           autoFocus
-          className="mr-1 h-[22px] min-w-0 flex-1 rounded border border-focus bg-raised px-1 outline-none ring-2 ring-focus/25"
+          className="mr-1 h-[22px] min-w-0 flex-1 select-text rounded border border-focus bg-raised px-1 outline-none ring-2 ring-focus/25"
           aria-label="Name"
           defaultValue={p.name}
           onFocus={(e) => e.target.select()}

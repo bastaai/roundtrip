@@ -9,29 +9,30 @@ import { btnCls, Count, Dot, fieldCls, ghostBtnCls, inputCls, keyLabel, KEYS, me
 type BarProps = {
   request: Req;
   sending: boolean;
-  dirty: boolean;
   onChange: (request: Req) => void;
   onSend: () => void;
-  onSave: () => void;
-  onCurl: () => void;
   grpcSource: GrpcSource['kind'];
   onProtoSettings: () => void;
   onLoadMethods: () => Promise<string[]>;
   // Message types and an example message for a method of this request's server.
   onDescribe: (method: string) => Promise<GrpcMethodInfo>;
-  // quiet controls at the far end of the row
-  trailing?: React.ReactNode;
 };
 
-type TabId = 'params' | 'headers' | 'auth' | 'body' | 'tests';
+type TabId = 'params' | 'headers' | 'auth' | 'body' | 'tests' | 'docs';
 
 const CONTENT_TYPES = ['application/json', 'text/plain', 'application/xml', 'text/html'];
 const textareaCls = `${fieldCls} flex-1 min-h-24 py-1.5 font-mono text-xs resize-none`;
 const KIND_COLOR: Record<Kind, string> = { http: '', graphql: 'text-m-graphql', grpc: 'text-m-grpc' };
 
-// Where the round trip starts: protocol, method, address and Send in one field across the whole main area.
-export function AddressBar({ request, sending, dirty, onChange, onSend, onSave, onCurl, grpcSource, onProtoSettings, onLoadMethods, onDescribe, trailing }: BarProps) {
+// Where the round trip starts: method, address and Send in one field across the whole main area.
+export function AddressBar({ request, sending, onChange, onSend, grpcSource, onProtoSettings, onLoadMethods, onDescribe }: BarProps) {
   const kind = kindOf(request);
+  // One menu for the HTTP methods and the other two protocols.
+  const verb = kind === 'http' ? request.method : kind;
+  const chooseVerb = (v: string) => {
+    if (v === 'graphql' || v === 'grpc') return onChange(setKind(request, v));
+    onChange({ ...(kind === 'http' ? request : setKind(request, 'http')), method: v });
+  };
   // Choosing a known method fills in an example of its request message, as
   // long as that does not overwrite something the user wrote.
   const chooseMethod = async (method: string, known: boolean) => {
@@ -46,36 +47,24 @@ export function AddressBar({ request, sending, dirty, onChange, onSend, onSave, 
   };
   return (
     <div className="shrink-0 border-b border-line">
-      <div className="flex items-center gap-1 px-3 py-2.5">
-        <div className="mr-1 flex h-9 min-w-0 flex-1 items-stretch rounded-lg border border-line bg-raised p-[3px] transition-[border-color,box-shadow] duration-100 hover:border-line-strong focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/25">
+      <div className="flex items-center px-3 pb-3 pt-2.5">
+        <div className="flex h-9 min-w-0 flex-1 items-stretch rounded-lg border border-line bg-raised p-[3px] transition-[border-color,box-shadow] duration-100 hover:border-line-strong focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/25">
           <Select
             bare
             className="shrink-0"
-            selectClassName={KIND_COLOR[kind] || 'text-muted'}
-            value={kind}
-            onChange={(e) => onChange(setKind(request, e.target.value as Kind))}
-            title="Protocol"
-            aria-label="Protocol"
+            selectClassName={`font-medium ${kind === 'http' ? methodColor(request.method) : KIND_COLOR[kind]}`}
+            value={verb}
+            onChange={(e) => chooseVerb(e.target.value)}
+            title="Method or protocol"
+            aria-label="Method or protocol"
           >
-            <option value="http">HTTP</option>
+            {(kind !== 'http' || METHODS.includes(request.method) ? METHODS : [...METHODS, request.method]).map((m) => (
+              <option key={m}>{m}</option>
+            ))}
+            <option disabled>──────</option>
             <option value="graphql">GraphQL</option>
             <option value="grpc">gRPC</option>
           </Select>
-          {kind !== 'grpc' && (
-            <Select
-              bare
-              className="shrink-0"
-              selectClassName={`font-medium ${methodColor(request.method)}`}
-              value={request.method}
-              onChange={(e) => onChange({ ...request, method: e.target.value })}
-              title="Method"
-              aria-label="Method"
-            >
-              {(METHODS.includes(request.method) ? METHODS : [...METHODS, request.method]).map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </Select>
-          )}
           <input
             autoFocus
             className="min-w-0 flex-1 bg-transparent px-2.5 font-mono text-[13px] outline-none placeholder:font-sans placeholder:text-faint"
@@ -96,16 +85,6 @@ export function AddressBar({ request, sending, dirty, onChange, onSend, onSave, 
             {sending ? <Spinner size={13} /> : 'Send'}
           </button>
         </div>
-        <button className={`${ghostBtnCls} ${dirty ? 'text-fg' : ''}`} onClick={onSave} title={`Save${dirty ? ' changes' : ''} (${keyLabel(KEYS.save)})`}>
-          Save
-          {dirty && <span className="size-1.5 rounded-full bg-muted" />}
-        </button>
-        {kind !== 'grpc' && (
-          <button className={ghostBtnCls} onClick={onCurl} title="Copy as cURL">
-            cURL
-          </button>
-        )}
-        {trailing}
       </div>
 
       {kind === 'grpc' && (
@@ -155,12 +134,13 @@ export function RequestEditor({
   const headersTab = { id: 'headers' as const, label: <>{kind === 'grpc' ? 'Metadata' : 'Headers'}{count(request.headers.filter((h) => h.enabled).length)}</> };
   const authTab = { id: 'auth' as const, label: <>Auth{dot(request.auth.type !== 'none')}</> };
   const testsTab = { id: 'tests' as const, label: <>Tests{count(request.tests.length + request.extract.length)}</> };
+  const docsTab = { id: 'docs' as const, label: <>Docs{dot(!!request.docs?.trim())}</> };
   const tabs: { id: TabId; label: React.ReactNode }[] =
     kind === 'grpc'
-      ? [{ id: 'body', label: 'Message' }, headersTab, authTab, testsTab]
+      ? [{ id: 'body', label: 'Message' }, headersTab, authTab, testsTab, docsTab]
       : kind === 'graphql'
-        ? [{ id: 'body', label: 'Query' }, headersTab, authTab, testsTab]
-        : [{ id: 'params', label: <>Params{count(params.length)}</> }, headersTab, authTab, { id: 'body', label: <>Body{dot(request.body.mode !== 'none')}</> }, testsTab];
+        ? [{ id: 'body', label: 'Query' }, headersTab, authTab, testsTab, docsTab]
+        : [{ id: 'params', label: <>Params{count(params.length)}</> }, headersTab, authTab, { id: 'body', label: <>Body{dot(request.body.mode !== 'none')}</> }, testsTab, docsTab];
   const current = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
@@ -168,6 +148,19 @@ export function RequestEditor({
       <Tabs active={current} onChange={setTab} tabs={tabs} />
 
       <div className="p-3 overflow-auto flex-1 min-h-0">
+        {current === 'docs' && (
+          <div className="flex h-full flex-col gap-2">
+            <textarea
+              className={`${fieldCls} flex-1 min-h-24 resize-none py-1.5 leading-relaxed`}
+              value={request.docs ?? ''}
+              onChange={(e) => onChange({ ...request, docs: e.target.value || undefined })}
+              placeholder="What this request is for, what it needs and what comes back."
+              aria-label="Documentation"
+              spellCheck
+            />
+            <p className="text-xs text-muted">Saved in the request's file, so it is shared through git with the request.</p>
+          </div>
+        )}
         {current === 'tests' && (
           <TestsEditor tests={request.tests} extract={request.extract} onChange={(tests, extract) => onChange({ ...request, tests, extract })} />
         )}

@@ -32,10 +32,12 @@ export const api = {
 
   history: () => call<HistoryEntry[]>('GET', '/history'),
   clearHistory: () => call<void>('DELETE', '/history'),
+  historyResponse: (id: string) => call<Res>('GET', `/history/${id}/response`),
 
   // proto is the config of the request's collection; it is left out of the body when empty.
-  send: (request: Req, environmentId: string, proto?: ProtoConfig) =>
-    call<Res>('POST', '/send', { request, environmentId, proto: normalizeProto(proto) }),
+  // itemId is the saved request being sent, so its history can be shown with it.
+  send: (request: Req, environmentId: string, proto?: ProtoConfig, itemId?: string) =>
+    call<Res>('POST', '/send', { request, environmentId, proto: normalizeProto(proto), itemId }),
   grpcMethods: (request: Req, environmentId: string, proto?: ProtoConfig) =>
     call<string[]>('POST', '/grpc/methods', { request, environmentId, proto: normalizeProto(proto) }),
   grpcDescribe: (request: Req, environmentId: string, proto?: ProtoConfig) =>

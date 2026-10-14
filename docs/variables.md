@@ -20,7 +20,7 @@ When the request is sent, each `{{name}}` is replaced with the variable's value.
 
 An environment is a named set of variables, such as `Local`, `Staging` and `Production`. Choose the active one in the menu at the top right. Requests stay the same; only the values change.
 
-Open **Environments** to create, rename and delete environments and edit their variables. Each variable has:
+Choose **Manage environments…** in the environment menu to create, rename and delete environments and edit their variables. Each variable has:
 
 | Control | Effect |
 |---|---|
@@ -51,7 +51,7 @@ Captured values:
 
 - take priority over an environment variable with the same name
 - are listed under **Captured this session** in the Environments dialog, where you can clear them
-- are held in memory only and disappear when Roundtrip closes or you switch workspace
+- are held in memory only and disappear when Roundtrip closes or you switch workspace (the response a value came from is still kept in the [history](requests.md#history) on your machine)
 
 ## Variables in the CLI
 

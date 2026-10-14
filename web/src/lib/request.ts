@@ -1,4 +1,4 @@
-import type { KV, Kind, Req } from '../types';
+import type { HistoryEntry, KV, Kind, Req } from '../types';
 
 export const uid = () => crypto.randomUUID();
 
@@ -28,6 +28,7 @@ export function normalizeReq(r?: Partial<Req> | null): Req {
     body: { ...body, mode: body.mode || 'none', form: body.form ?? [] },
     tests: r?.tests ?? [],
     extract: r?.extract ?? [],
+    docs: r?.docs || undefined,
   };
 }
 
@@ -90,6 +91,20 @@ export function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+export const formatTime = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`);
+
+const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+
+// "14:02:11 · 200 · 38 ms" for today, with the date in front for earlier days.
+export function runLabel(h: HistoryEntry, now = new Date()): string {
+  const at = new Date(h.at);
+  const time = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const when = sameDay(at, now) ? time : `${at.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`;
+  const grpc = h.request.protocol === 'grpc';
+  const status = h.error ? 'Error' : grpc && h.status === 0 ? 'OK' : String(h.status);
+  return `${when} · ${status} · ${formatTime(h.timeMs)}`;
+}
+
 export function prettyJson(text: string): string | null {
   try {
     return JSON.stringify(JSON.parse(text), null, 2);
@@ -98,14 +113,3 @@ export function prettyJson(text: string): string | null {
   }
 }
 
-// Returns HTML. Input is escaped first, so it is safe to inject.
-export function highlightJson(json: string): string {
-  const escaped = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return escaped.replace(
-    /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g,
-    (match, str, colon, lit) => {
-      if (str) return colon ? `<span class="json-key">${str}</span>${colon}` : `<span class="json-str">${str}</span>`;
-      return `<span class="${lit ? 'json-lit' : 'json-num'}">${match}</span>`;
-    },
-  );
-}

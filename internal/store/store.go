@@ -36,6 +36,7 @@ import (
 
 const (
 	historyLimit   = 200
+	keptBodyLimit  = 1 << 20
 	ext            = ".yaml"
 	collectionMeta = "_collection" + ext
 	folderMeta     = "_folder" + ext
@@ -219,6 +220,24 @@ func (s *Store) readItems(dir string) ([]*model.Item, error) {
 	return append(folders, requests...), nil
 }
 
+// withoutDefaults drops what a request file does not need to say because it
+// is the default anyway: no auth, an API key in a header, an empty body and
+// its content type. The editor fills these in, so without this every saved
+// request would carry them.
+func withoutDefaults(r model.Request) model.Request {
+	if r.Auth.In == "header" {
+		r.Auth.In = ""
+	}
+	if r.Auth == (model.Auth{Type: "none"}) {
+		r.Auth = model.Auth{}
+	}
+	b := r.Body
+	if (b.Mode == "none" || b.Mode == "") && b.Raw == "" && len(b.Form) == 0 && b.Variables == "" {
+		r.Body = model.Body{}
+	}
+	return r
+}
+
 // writeDir syncs dir to match items. Stale request files and folders are
 // removed; files this app doesn't own (READMEs, dotfiles) are left alone.
 func writeDir(dir, metaFile string, m meta, items []*model.Item) error {
@@ -241,7 +260,7 @@ func writeDir(dir, metaFile string, m meta, items []*model.Item) error {
 		}
 		name := uniqueName(sanitize(it.Name), usedFiles) + ext
 		keep[lower(name)] = true
-		if err := writeYAML(filepath.Join(dir, name), requestFile{ID: it.ID, Name: it.Name, Request: *it.Request}); err != nil {
+		if err := writeYAML(filepath.Join(dir, name), requestFile{ID: it.ID, Name: it.Name, Request: withoutDefaults(*it.Request)}); err != nil {
 			return err
 		}
 	}
@@ -340,24 +359,76 @@ func (s *Store) history() ([]*model.HistoryEntry, error) {
 	return h, err
 }
 
-func (s *Store) AddHistory(e *model.HistoryEntry) error {
+// AddHistory records e and keeps res, so it can be shown again later. A body
+// over keptBodyLimit is not kept; the rest of the response is.
+func (s *Store) AddHistory(e *model.HistoryEntry, res *model.Response) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h, err := s.history()
 	if err != nil {
 		return err
 	}
+	if res != nil {
+		kept := *res
+		if len(kept.Body) > keptBodyLimit {
+			kept.Body, kept.BodyNotKept = "", true
+		}
+		if err := os.MkdirAll(filepath.Join(s.local, "responses"), 0o755); err != nil {
+			return err
+		}
+		if err := writeJSON(s.responsePath(e.ID), kept); err != nil {
+			return err
+		}
+	}
 	h = append([]*model.HistoryEntry{e}, h...)
 	if len(h) > historyLimit {
+		for _, old := range h[historyLimit:] {
+			os.Remove(s.responsePath(old.ID))
+		}
 		h = h[:historyLimit]
 	}
 	return writeJSON(filepath.Join(s.local, "history.json"), h)
 }
 
+// HistoryResponse is the response kept for a history entry, or an error
+// matching fs.ErrNotExist when there is none.
+func (s *Store) HistoryResponse(id string) (*model.Response, error) {
+	if !validID(id) {
+		return nil, fs.ErrNotExist
+	}
+	path := s.responsePath(id)
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	res := &model.Response{}
+	return res, readJSON(path, res)
+}
+
 func (s *Store) ClearHistory() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := os.RemoveAll(filepath.Join(s.local, "responses")); err != nil {
+		return err
+	}
 	return writeJSON(filepath.Join(s.local, "history.json"), []*model.HistoryEntry{})
+}
+
+func (s *Store) responsePath(id string) string {
+	return filepath.Join(s.local, "responses", id+".json")
+}
+
+// validID accepts the ids model.NewID makes, so an id from a URL cannot point
+// outside the responses directory.
+func validID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- helpers ----

@@ -24,6 +24,7 @@ const btnBase =
   'inline-flex shrink-0 items-center justify-center gap-1.5 h-7 px-2.5 rounded-md whitespace-nowrap select-none transition-colors duration-100 disabled:opacity-45 disabled:pointer-events-none';
 export const btnCls = `${btnBase} border border-line bg-raised hover:bg-hover hover:border-line-strong active:bg-active`;
 export const ghostBtnCls = `${btnBase} text-muted hover:bg-hover hover:text-fg active:bg-active`;
+export const dangerBtnCls = `${btnBase} bg-danger text-bg font-medium hover:opacity-90 active:opacity-100`;
 export const primaryBtnCls = `${btnBase} bg-accent text-accent-fg font-medium hover:bg-accent-hover active:bg-accent`;
 
 const METHOD_COLORS: Record<string, string> = {
@@ -309,6 +310,37 @@ export function Modal(p: { title: string; onClose: () => void; children: ReactNo
         {p.footer && <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-4 py-3">{p.footer}</div>}
       </div>
     </div>
+  );
+}
+
+// The app's own yes/no question. window.confirm cannot be used: the desktop
+// window's web view never shows it and answers no.
+export function Confirm(p: { title: string; message: ReactNode; action: string; onConfirm: () => void; onClose: () => void }) {
+  return (
+    <Modal
+      title={p.title}
+      onClose={p.onClose}
+      width="max-w-[420px]"
+      footer={
+        <>
+          <button className={btnCls} onClick={p.onClose}>
+            Cancel
+          </button>
+          <button
+            className={dangerBtnCls}
+            autoFocus
+            onClick={() => {
+              p.onClose();
+              p.onConfirm();
+            }}
+          >
+            {p.action}
+          </button>
+        </>
+      }
+    >
+      <p className="text-muted">{p.message}</p>
+    </Modal>
   );
 }
 

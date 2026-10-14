@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Item } from '../types';
 import { emptyRequest } from './request';
-import { addItem, countRequests, filterCollections, findItem, listFolders, mapItem, removeItem, sortItems } from './tree';
+import { addItem, countRequests, filterCollections, findItem, folderPath, freeName, mapItem, moveItem, parentOf, subtreeIds, removeItem, sortItems } from './tree';
 
 const req = (id: string, name = id): Item => ({ id, name, request: emptyRequest() });
 const folder = (id: string, items: Item[] = [], name = id): Item => ({ id, name, items });
@@ -37,13 +37,6 @@ describe('tree', () => {
     const sorted = sortItems([req('1', 'beta'), folder('2', [req('3', 'z'), req('4', 'A')], 'zeta'), req('5', 'Alpha'), folder('6', [], 'eta')]);
     expect(sorted.map((i) => i.name)).toEqual(['eta', 'zeta', 'Alpha', 'beta']);
     expect(sorted[1].items?.map((i) => i.name)).toEqual(['A', 'z']);
-  });
-
-  it('lists folders with their path', () => {
-    expect(listFolders(tree())).toEqual([
-      { id: 'f1', label: 'f1' },
-      { id: 'f2', label: 'f1 / f2' },
-    ]);
   });
 });
 
@@ -91,4 +84,51 @@ describe('filterCollections', () => {
     expect(countRequests(cols()[0].items)).toBe(3);
     expect(countRequests(filterCollections(cols(), 'create')[0].items)).toBe(1);
   });
+});
+
+it('folderPath', () => {
+  expect(folderPath(tree(), 'r3')).toEqual(['f1', 'f2']);
+  expect(folderPath(tree(), 'r1')).toEqual([]);
+  expect(folderPath(tree(), 'nope')).toBeUndefined();
+});
+
+it('freeName', () => {
+  expect(freeName([req('a', 'Login')], 'New request')).toBe('New request');
+  expect(freeName([req('a', 'New request'), req('b', 'new request 2')], 'New request')).toBe('New request 3');
+});
+
+describe('moveItem', () => {
+  // tree(): f1 [r2, f2 [r3]], r1
+  const a = () => ({ id: 'a', items: tree() });
+  const b = () => ({ id: 'b', items: [folder('g1')] });
+  const names = (items: Item[]): unknown => items.map((i) => (i.items ? { [i.id]: names(i.items) } : i.id));
+
+  it('moves within a collection', () => {
+    const [moved] = moveItem(a(), a(), 'r1', 'f2')!;
+    expect(names(moved.items)).toEqual([{ f1: ['r2', { f2: ['r3', 'r1'] }] }]);
+    expect(names(moveItem(a(), a(), 'f2', null)![0].items)).toEqual([{ f1: ['r2'] }, 'r1', { f2: ['r3'] }]);
+  });
+
+  it('moves a folder with its contents to another collection', () => {
+    const [from, to] = moveItem(a(), b(), 'f1', 'g1')!;
+    expect(names(from.items)).toEqual(['r1']);
+    expect(names(to.items)).toEqual([{ g1: [{ f1: ['r2', { f2: ['r3'] }] }] }]);
+    expect(names(moveItem(a(), b(), 'r3', null)![1].items)).toEqual([{ g1: [] }, 'r3']);
+  });
+
+  it('refuses moves that are impossible or change nothing', () => {
+    expect(moveItem(a(), a(), 'f1', 'f1')).toBeNull();
+    expect(moveItem(a(), a(), 'f1', 'f2')).toBeNull();
+    expect(moveItem(a(), a(), 'r3', 'f2')).toBeNull();
+    expect(moveItem(a(), a(), 'r1', null)).toBeNull();
+    expect(moveItem(a(), b(), 'nope', null)).toBeNull();
+    expect(moveItem(a(), b(), 'r1', 'f1')).toBeNull();
+  });
+});
+
+it('parentOf and subtreeIds', () => {
+  expect(parentOf(tree(), 'r3')).toBe('f2');
+  expect(parentOf(tree(), 'r1')).toBeNull();
+  expect(parentOf(tree(), 'nope')).toBeUndefined();
+  expect(subtreeIds(tree()[0])).toEqual(['f1', 'r2', 'f2', 'r3']);
 });

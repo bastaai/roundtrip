@@ -35,6 +35,7 @@ export type Req = {
   body: Body;
   tests: Assertion[];
   extract: Extract[];
+  docs?: string;
 };
 
 export type Kind = 'http' | 'graphql' | 'grpc';
@@ -48,7 +49,7 @@ export type ProtoCheck = { files: number; services: string[]; methods: string[] 
 export type Collection = { id: string; name: string; items: Item[]; proto?: ProtoConfig };
 export type Environment = { id: string; name: string; variables: KV[] };
 
-export type HistoryEntry = { id: string; at: string; request: Req; status: number; timeMs: number; error?: string; passed?: number; failed?: number };
+export type HistoryEntry = { id: string; at: string; request: Req; itemId?: string; status: number; timeMs: number; error?: string; passed?: number; failed?: number };
 
 export type Res = {
   status: number;
@@ -62,6 +63,8 @@ export type Res = {
   // status is a gRPC code (0 = OK) instead of an HTTP status
   grpc?: boolean;
   tests?: TestResult[];
+  // a response from history whose body was too large to keep
+  bodyNotKept?: boolean;
 };
 
 export type GitChange = { path: string; status: 'added' | 'modified' | 'deleted' };

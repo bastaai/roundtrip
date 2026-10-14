@@ -78,9 +78,12 @@ tests:
 extract:
   - var: userId
     from: body.id
+docs: |-
+  Creates a user and saves its id as {{userId}}.
+  Needs an admin token.
 ```
 
-Fields that are empty are left out.
+Fields that are empty, or hold their default (no auth, no body, an API key sent as a header), are left out.
 
 ### Top level
 
@@ -96,6 +99,7 @@ Fields that are empty are left out.
 | `body` | See below |
 | `tests` | List of `target`, `op`, `value`. See [Tests](tests.md). |
 | `extract` | List of `var`, `from`. See [Saving values](tests.md#saving-values-for-later-requests). |
+| `docs` | Free text describing the request, edited in the **Docs** tab |
 
 ### `auth`
 

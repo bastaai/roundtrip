@@ -9,7 +9,7 @@ A collection with proto files configured always uses them. A collection without 
 
 ## Making a call
 
-1. Choose **gRPC** in the protocol menu.
+1. Choose **gRPC** in the method menu at the start of the address bar.
 2. Enter the server address:
 
    | Address | Connection |

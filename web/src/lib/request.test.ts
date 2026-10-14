@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyRequest, formatSize, repoName, highlightJson, kindOf, normalizeReq, parseQuery, setKind, setQuery } from './request';
+import { emptyRequest, formatSize, runLabel, repoName, kindOf, normalizeReq, parseQuery, setKind, setQuery } from './request';
 
 const kv = (key: string, value: string) => ({ key, value, enabled: true });
 
@@ -81,16 +81,6 @@ describe('kind', () => {
   });
 });
 
-describe('highlightJson', () => {
-  it('classifies tokens and escapes html', () => {
-    const html = highlightJson('{"a<b": "x:1", "n": -1.5e3, "t": true}');
-    expect(html).toContain('<span class="json-key">"a&lt;b"</span>:');
-    expect(html).toContain('<span class="json-str">"x:1"</span>');
-    expect(html).toContain('<span class="json-num">-1.5e3</span>');
-    expect(html).toContain('<span class="json-lit">true</span>');
-  });
-});
-
 it('repoName', () => {
   expect(repoName('git@github.com:acme/api-requests.git')).toBe('acme/api-requests');
   expect(repoName('https://github.com/acme/api-requests/')).toBe('acme/api-requests');
@@ -102,4 +92,19 @@ it('formatSize', () => {
   expect(formatSize(512)).toBe('512 B');
   expect(formatSize(2048)).toBe('2.0 KB');
   expect(formatSize(5 * 1024 * 1024)).toBe('5.0 MB');
+});
+
+it('runLabel', () => {
+  const now = new Date(2026, 9, 14, 15, 0, 0);
+  const at = (d: Date) => d.toISOString();
+  const entry = { id: 'h', request: emptyRequest(), status: 201, timeMs: 38 };
+  const time = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const earlier = new Date(2026, 9, 14, 14, 2, 11);
+  expect(runLabel({ ...entry, at: at(earlier) }, now)).toBe(`${time(earlier)} · 201 · 38 ms`);
+  const before = new Date(2026, 9, 12, 9, 5, 0);
+  expect(runLabel({ ...entry, at: at(before), timeMs: 1500 }, now)).toBe(
+    `${before.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time(before)} · 201 · 1.50 s`,
+  );
+  expect(runLabel({ ...entry, at: at(now), error: 'refused' }, now)).toContain('· Error ·');
+  expect(runLabel({ ...entry, at: at(now), status: 0, request: { ...emptyRequest(), protocol: 'grpc' } }, now)).toContain('· OK ·');
 });

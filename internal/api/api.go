@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"maps"
 	"net"
@@ -253,6 +254,14 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
 		respond(w)(s.st().History())
 	})
+	mux.HandleFunc("GET /api/history/{id}/response", func(w http.ResponseWriter, r *http.Request) {
+		res, err := s.st().HistoryResponse(r.PathValue("id"))
+		if errors.Is(err, fs.ErrNotExist) {
+			http.Error(w, "this response was not kept", http.StatusNotFound)
+			return
+		}
+		respond(w)(res, err)
+	})
 	mux.HandleFunc("DELETE /api/history", func(w http.ResponseWriter, r *http.Request) {
 		respond(w)(nil, s.st().ClearHistory())
 	})
@@ -375,6 +384,8 @@ type sendInput struct {
 	Request       model.Request     `json:"request"`
 	EnvironmentID string            `json:"environmentId"`
 	Proto         model.ProtoConfig `json:"proto"`
+	// ItemID is the saved request being sent, so its earlier responses can be found.
+	ItemID string `json:"itemId"`
 }
 
 // vars returns the variables of an environment with the runtime variables
@@ -413,6 +424,7 @@ func (s *server) send(w http.ResponseWriter, r *http.Request) {
 		ID:      model.NewID(),
 		At:      time.Now(),
 		Request: in.Request,
+		ItemID:  in.ItemID,
 		Status:  res.Status,
 		TimeMs:  res.TimeMs,
 		Error:   res.Error,
@@ -424,7 +436,7 @@ func (s *server) send(w http.ResponseWriter, r *http.Request) {
 			entry.Failed++
 		}
 	}
-	respond(w)(res, st.AddHistory(entry))
+	respond(w)(res, st.AddHistory(entry, &res))
 }
 
 // guard rejects requests that don't come from this machine's own UI. Without

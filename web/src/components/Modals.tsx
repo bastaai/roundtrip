@@ -4,7 +4,6 @@ import { checkSummary, groupMethods, normalizeProto } from '../lib/proto';
 import { repoName, uid } from '../lib/request';
 import { portablePath, protoFilePath } from '../lib/paths';
 import { folderName } from '../lib/shell';
-import { listFolders } from '../lib/tree';
 import type { Collection, Environment, ProtoCheck, ProtoConfig, Req, Workspace } from '../types';
 import { KVEditor, ListEditor } from './KVEditor';
 import { PathBrowser } from './PathBrowser';
@@ -204,69 +203,6 @@ export function CurlModal(p: { request: Req; environmentId: string; onClose: () 
       ) : (
         <pre className="min-h-16 rounded-md bg-panel p-3 font-mono text-xs leading-[1.6] whitespace-pre-wrap break-all">{command}</pre>
       )}
-    </Modal>
-  );
-}
-
-export type SaveTarget = { collectionId: string; folderId: string | null } | { newCollection: string };
-
-export function SaveModal(p: { collections: Collection[]; defaultName: string; onClose: () => void; onSave: (name: string, target: SaveTarget) => void }) {
-  const options = p.collections.flatMap((c) => [
-    { value: `${c.id}|`, label: c.name },
-    ...listFolders(c.items).map((f) => ({ value: `${c.id}|${f.id}`, label: `${c.name} / ${f.label}` })),
-  ]);
-  const [name, setName] = useState(p.defaultName);
-  const [target, setTarget] = useState(options[0]?.value ?? 'new');
-  const [newName, setNewName] = useState('My Collection');
-
-  const valid = name.trim() && (target !== 'new' || newName.trim());
-  const save = () => {
-    if (!valid) return;
-    if (target === 'new') return p.onSave(name.trim(), { newCollection: newName.trim() });
-    const [collectionId, folderId] = target.split('|');
-    p.onSave(name.trim(), { collectionId, folderId: folderId || null });
-  };
-  const onEnter = (e: React.KeyboardEvent) => e.key === 'Enter' && save();
-
-  return (
-    <Modal
-      title="Save request"
-      onClose={p.onClose}
-      width="max-w-[440px]"
-      footer={
-        <>
-          <button className={btnCls} onClick={p.onClose}>
-            Cancel
-          </button>
-          <button className={primaryBtnCls} disabled={!valid} onClick={save}>
-            Save
-          </button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1.5">
-          <span className={labelCls}>Request name</span>
-          <input autoFocus className={inputCls} placeholder="e.g. List users" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={onEnter} />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className={labelCls}>Save to</span>
-          <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-            <option value="new">+ New collection…</option>
-          </Select>
-        </label>
-        {target === 'new' && (
-          <label className="flex flex-col gap-1.5">
-            <span className={labelCls}>Collection name</span>
-            <input className={inputCls} placeholder="Collection name" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={onEnter} />
-          </label>
-        )}
-      </div>
     </Modal>
   );
 }

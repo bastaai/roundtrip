@@ -15,6 +15,9 @@ The first public version, under active development.
 - GraphQL requests with query and variables editors.
 - Unary gRPC calls using local `.proto` files with import roots, or server reflection.
 - Method suggestions and generated example request messages for gRPC.
+- Documentation for each request, saved in its file.
+- Foldable JSON responses.
+- History for each request: it opens with its last response, and earlier responses can be shown again.
 - cURL import and export.
 
 ### Workspaces and files
@@ -33,6 +36,8 @@ The first public version, under active development.
 ### Interface
 
 - Side-by-side request and response layout with a full-width address bar.
+- Requests are saved as you type; one request is shown at a time, headed by its name.
+- Drag and drop requests and folders between folders and collections.
 - Quick open (Cmd/Ctrl+K), collapsible and filterable sidebar, tabs and history.
 - Native desktop app for macOS.
 

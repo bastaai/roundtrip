@@ -413,7 +413,8 @@ func TestSendRunsTestsAndRemembersExtractedVariables(t *testing.T) {
 		t.Fatalf("after clear: %q", res.Body)
 	}
 
-	// Switching workspace forgets them, and nothing was written to disk.
+	// Switching workspace forgets them. They were never written to disk: the
+	// only copies are the responses kept with the local history.
 	c.do("POST", "/api/send", map[string]any{"environmentId": "e1", "request": model.Request{URL: target.URL + "/login", Extract: []model.Extract{{Var: "token", From: "body.access_token"}}}}, &res)
 	var info workspaceInfo
 	c.do("GET", "/api/workspace", nil, &info)
@@ -429,10 +430,15 @@ func TestSendRunsTestsAndRemembersExtractedVariables(t *testing.T) {
 }
 
 // grep returns the files under dir that contain text.
+// grep lists the files under dir that contain text, leaving out the responses
+// kept with the history, which hold whatever the servers sent back.
 func grep(t *testing.T, dir, text string) string {
 	t.Helper()
 	found := ""
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() && d.Name() == "responses" {
+			return filepath.SkipDir
+		}
 		if err == nil && !d.IsDir() {
 			if data, _ := os.ReadFile(path); strings.Contains(string(data), text) {
 				found += path + " "
@@ -671,5 +677,30 @@ func TestGRPCWithProtoFiles(t *testing.T) {
 	}
 	if code, body := c.text("/api/proto/check", map[string]any{"proto": map[string]any{}}); code != 400 || strings.TrimSpace(body) == "" {
 		t.Fatalf("check of an empty config: %d %s", code, body)
+	}
+}
+
+func TestHistoryKeepsEachResponse(t *testing.T) {
+	c := setup(t)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"n":` + r.URL.Query().Get("n") + `}`))
+	}))
+	defer target.Close()
+
+	var res model.Response
+	for _, n := range []string{"1", "2"} {
+		c.do("POST", "/api/send", map[string]any{"itemId": "r1", "request": model.Request{Method: "GET", URL: target.URL + "/?n=" + n}}, &res)
+	}
+	var h []model.HistoryEntry
+	c.do("GET", "/api/history", nil, &h)
+	if len(h) != 2 || h[0].ItemID != "r1" {
+		t.Fatalf("history: %+v", h)
+	}
+	var kept model.Response
+	if code := c.do("GET", "/api/history/"+h[1].ID+"/response", nil, &kept); code != 200 || kept.Body != `{"n":1}` || kept.Status != 200 {
+		t.Fatalf("first response: %d %+v", code, kept)
+	}
+	if code := c.do("GET", "/api/history/0123456789abcdef/response", nil, nil); code != 404 {
+		t.Fatalf("unknown entry: %d", code)
 	}
 }

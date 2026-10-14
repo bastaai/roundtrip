@@ -58,6 +58,8 @@ type Request struct {
 	// response into variables for later requests. See internal/check.
 	Tests   []Assertion `json:"tests,omitempty" yaml:"tests,omitempty"`
 	Extract []Extract   `json:"extract,omitempty" yaml:"extract,omitempty"`
+	// Docs is free text about the request for whoever uses it next.
+	Docs string `json:"docs,omitempty" yaml:"docs,omitempty"`
 }
 
 // Assertion.Target is one of: status, time (ms), header.<Name>, body,
@@ -147,9 +149,11 @@ type HistoryEntry struct {
 	ID      string    `json:"id"`
 	At      time.Time `json:"at"`
 	Request Request   `json:"request"`
-	Status  int       `json:"status"`
-	TimeMs  int64     `json:"timeMs"`
-	Error   string    `json:"error,omitempty"`
+	// ItemID is the saved request this was sent from, if any.
+	ItemID string `json:"itemId,omitempty"`
+	Status int    `json:"status"`
+	TimeMs int64  `json:"timeMs"`
+	Error  string `json:"error,omitempty"`
 	// Passed and Failed count the request's tests.
 	Passed int `json:"passed,omitempty"`
 	Failed int `json:"failed,omitempty"`
@@ -173,6 +177,8 @@ type Response struct {
 	GRPC bool `json:"grpc,omitempty"`
 	// Tests holds the results of the request's tests, in order.
 	Tests []TestResult `json:"tests,omitempty"`
+	// BodyNotKept marks a response from history whose body was too large to keep.
+	BodyNotKept bool `json:"bodyNotKept,omitempty"`
 }
 
 func NewID() string {

@@ -51,7 +51,7 @@ We could not find that, so we built it, and we are making it open source because
 | **Requests** | Methods, query parameters, headers, JSON / text / form bodies, Bearer, Basic and API-key auth |
 | **GraphQL** | Query and variables editors |
 | **gRPC** | Unary calls using local `.proto` files with import roots, or server reflection; method suggestions and generated example messages |
-| **Collections** | Nested folders, tabs, history, cURL import and export |
+| **Collections** | Nested folders, saved as you type, documented per request; history, cURL import and export |
 | **Navigation** | Jump to any request with <kbd>⌘</kbd><kbd>K</kbd>, filter the tree, switch between workspaces |
 | **Variables** | `{{name}}` in URLs, headers, auth, bodies and proto paths; multiple environments |
 | **Tests** | Declarative checks on status, headers, body fields and timing |
@@ -78,7 +78,7 @@ Start it on a folder for your requests, ideally one inside a git repository:
 ./roundtrip ~/code/my-service/api-requests
 ```
 
-Roundtrip opens in your browser. Create a collection, add a request and press <kbd>⌘</kbd><kbd>↵</kbd> (<kbd>Ctrl</kbd><kbd>Enter</kbd> on Windows and Linux) to send it. Everything you save lands in that folder as YAML, ready to commit.
+Roundtrip opens in your browser. Select the new-request button, type a URL and press <kbd>⌘</kbd><kbd>↵</kbd> (<kbd>Ctrl</kbd><kbd>Enter</kbd> on Windows and Linux) to send it. There is no Save: every request is written to that folder as YAML as you type, ready to commit.
 
 On macOS you can build the native app instead:
 

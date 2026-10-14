@@ -1,6 +1,6 @@
 # Getting started
 
-This guide takes you from nothing to a saved, shareable request.
+This guide takes you from nothing to a shareable request.
 
 ## 1. Build Roundtrip
 
@@ -47,16 +47,16 @@ The native app is the same interface in its own window. The first time it runs i
 
 ## 3. Send a request
 
-1. Type a URL in the bar at the top, for example `https://api.github.com/zen`.
+1. Select the new-request button at the top right and type a URL, for example `https://api.github.com/zen`.
 2. Press <kbd>⌘</kbd><kbd>↵</kbd> on macOS or <kbd>Ctrl</kbd><kbd>Enter</kbd> on Windows and Linux.
 
-The request goes out on the left and the response comes back on the right, headed by its status, time and size. JSON is formatted automatically. In a narrow window the response moves below the request; the button at the end of the address bar switches between the two arrangements.
+The request goes out on the left and the response comes back on the right, headed by its status, time and size. JSON is formatted automatically. In a narrow window the response moves below the request; the *Response under the request* command in **Go to** (<kbd>⌘</kbd><kbd>K</kbd> / <kbd>Ctrl</kbd><kbd>K</kbd>) switches between the two arrangements.
 
-## 4. Save it in a collection
+## 4. Name it
 
-Press <kbd>⌘</kbd><kbd>S</kbd> / <kbd>Ctrl</kbd><kbd>S</kbd>, give the request a name and choose **New collection**.
+There is nothing to save. As soon as you type, the request is written to the collection you are working in (a new workspace starts one called *Requests*), and every later edit is written as you make it. Select the name at the top of the page, type `Zen` and press <kbd>Enter</kbd>.
 
-A collection is a folder in your workspace. You can nest folders inside it, and every request is saved as one YAML file:
+A collection is a folder in your workspace. You can nest folders inside it, drag requests and folders between them, and every request is one YAML file:
 
 ```
 api-requests/
@@ -70,7 +70,7 @@ The files are plain text, so they diff and review like code.
 
 ## 5. Use a variable
 
-Hard-coded hosts and tokens make requests hard to share. Open **Environments**, create one called `Local`, and add a variable:
+Hard-coded hosts and tokens make requests hard to share. Choose **Manage environments…** in the environment menu at the top right, create one called `Local`, and add a variable:
 
 | Variable | Value |
 |---|---|
@@ -91,8 +91,7 @@ Not in a repository yet? Select the folder name, enter a folder inside one of yo
 | Action | macOS | Windows / Linux |
 |---|---|---|
 | Send request | <kbd>⌘</kbd><kbd>↵</kbd> | <kbd>Ctrl</kbd><kbd>Enter</kbd> |
-| Save request | <kbd>⌘</kbd><kbd>S</kbd> | <kbd>Ctrl</kbd><kbd>S</kbd> |
-| Go to a request or run an action | <kbd>⌘</kbd><kbd>K</kbd> | <kbd>Ctrl</kbd><kbd>K</kbd> |
+| Go to a request or run a command | <kbd>⌘</kbd><kbd>K</kbd> | <kbd>Ctrl</kbd><kbd>K</kbd> |
 | Hide or show the sidebar | <kbd>⌘</kbd><kbd>B</kbd> | <kbd>Ctrl</kbd><kbd>B</kbd> |
 | Rename the selected item | <kbd>F2</kbd> | <kbd>F2</kbd> |
 | Move in the collection tree | Arrow keys | Arrow keys |
@@ -100,7 +99,7 @@ Not in a repository yet? Select the folder name, enter a folder inside one of yo
 
 ## Finding your way around
 
-- **Go to** (<kbd>⌘</kbd><kbd>K</kbd> / <kbd>Ctrl</kbd><kbd>K</kbd>) jumps to any request by name, or by the initials of its words: `lu` finds *List users*. It also runs common actions, such as switching environment or workspace.
+- **Go to** (<kbd>⌘</kbd><kbd>K</kbd> / <kbd>Ctrl</kbd><kbd>K</kbd>, or the search button) jumps to any request by name, or by the initials of its words: `lu` finds *List users*. It also runs commands: importing or copying cURL, switching environment or workspace, and changing the layout.
 - **Filter**, at the top of the sidebar, narrows the collection tree as you type.
 - Hide the sidebar to give the request and response the whole window.
 

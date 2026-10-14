@@ -1,30 +1,38 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from './api';
-import { CurlModal, EnvModal, ImportModal, ProtoModal, WorkspaceModal, SaveModal, type SaveTarget } from './components/Modals';
+import { CurlModal, EnvModal, ImportModal, ProtoModal, WorkspaceModal } from './components/Modals';
 import { Logo } from './components/Logo';
 import { QuickOpen, type QuickAction } from './components/QuickOpen';
 import { AddressBar, RequestEditor } from './components/RequestEditor';
 import { ResponseView } from './components/ResponseView';
 import { Sidebar } from './components/Sidebar';
-import { ghostBtnCls, Icon, IconButton, isMod, Kbd, keyLabel, KEYS, Method, ResizeHandle, Select } from './components/ui';
+import { ghostBtnCls, Icon, IconButton, isMod, keyLabel, KEYS, ResizeHandle, Select } from './components/ui';
 import { grpcSource, protoOf, sameProto, withProto } from './lib/proto';
-import { emptyRequest, normalizeReq, uid } from './lib/request';
+import { emptyRequest, kindOf, normalizeReq, uid } from './lib/request';
 import { folderName } from './lib/shell';
-import { addItem, findItem, mapItem, sortItems } from './lib/tree';
+import { findItem, folderPath, freeName, mapItem, sortItems, subtreeIds } from './lib/tree';
 import type { Collection, Environment, HistoryEntry, Item, Req, Res, Workspace } from './types';
 
-type Tab = {
+// A request opened in this session. One is shown at a time; the others keep
+// their last response so going back to them shows it again.
+type Page = {
   id: string;
   name: string;
   request: Req;
+  // Where the request is saved. A page without one becomes a request in the
+  // current collection on its first edit.
   source?: { collectionId: string; itemId: string };
-  dirty: boolean;
   sending: boolean;
   response?: Res;
+  // The history entry the response came from, when it is known.
+  run?: string;
 };
 
-const blankTab = (): Tab => ({ id: uid(), name: 'Untitled', request: emptyRequest(), dirty: false, sending: false });
-const untouched = (t: Tab) => !t.source && !t.dirty && !t.response && !t.sending;
+const blankPage = (): Page => ({ id: uid(), name: '', request: emptyRequest(), sending: false });
+const untouched = (p: Page) => !p.source && !p.response && !p.sending;
+// Edits are written once typing pauses for this long.
+const TYPING_PAUSE = 400;
+const MANAGE_ENVIRONMENTS = '\u0000manage';
 const errorResponse = (error: string): Res => ({ status: 0, statusText: '', headers: [], body: '', base64: false, size: 0, timeMs: 0, error });
 
 const SIDEBAR_DEFAULT = 280;
@@ -41,9 +49,9 @@ export default function App() {
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [envId, setEnvId] = useState(() => localStorage.getItem('envId') ?? '');
-  const [tabs, setTabs] = useState<Tab[]>(() => [blankTab()]);
-  const [activeId, setActiveId] = useState(() => tabs[0].id);
-  const [modal, setModal] = useState<null | 'env' | 'import' | 'save' | 'curl' | 'repo' | 'quick'>(null);
+  const [pages, setPages] = useState<Page[]>(() => [blankPage()]);
+  const [activeId, setActiveId] = useState(() => pages[0].id);
+  const [modal, setModal] = useState<null | 'env' | 'import' | 'curl' | 'repo' | 'quick'>(null);
   // id of the collection whose proto settings are open
   const [protoFor, setProtoFor] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<Workspace>();
@@ -56,11 +64,15 @@ export default function App() {
   const [sidebarHidden, setSidebarHidden] = useState(() => localStorage.getItem('sidebarHidden') === '1');
   const [pairWidth, setPairWidth] = useState(0);
   const pairRef = useRef<HTMLDivElement>(null);
+  // Collection writes waiting for typing to pause, at most one per collection.
+  const writes = useRef(new Map<string, { collection: Collection; timer: ReturnType<typeof setTimeout> }>());
+  // The collection a new request goes into: the one last worked in.
+  const lastCollection = useRef('');
   const roomForColumns = pairWidth >= COLUMNS_MIN_WIDTH;
   const columns = !stacked && roomForColumns;
 
   const changeCount = workspace ? workspace.git.changes.length + workspace.git.ahead : 0;
-  const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
+  const active = pages.find((p) => p.id === activeId) ?? pages[0];
   const activeSource = grpcSource(collections, active.source);
   const protoCollection = collections.find((c) => c.id === protoFor);
   const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
@@ -99,8 +111,12 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
-    document.getElementById(`tab-${activeId}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [activeId, tabs.length]);
+    if (active.source) lastCollection.current = active.source.collectionId;
+  }, [active.source]);
+  useEffect(() => {
+    window.addEventListener('pagehide', flushWrites);
+    return () => window.removeEventListener('pagehide', flushWrites);
+  }, []);
 
   const resizeSidebar = (width: number) => setSidebarWidth(clamp(Math.round(width), 200, Math.min(520, window.innerWidth - 480)));
   const resizeSplit = (ratio: number) => setSplit(clamp(ratio, 0.2, 0.8));
@@ -110,90 +126,138 @@ export default function App() {
     return clamp(ratio, min, 1 - min);
   };
   const resizeColumns = (ratio: number) => setColumnSplit(fitColumns(ratio));
-  const newTab = () => {
-    const tab = blankTab();
-    setTabs((ts) => [...ts, tab]);
-    setActiveId(tab.id);
+  const patchPage = (id: string, patch: Partial<Page>) => setPages((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+
+  // Replaces the current page when nothing has happened on it yet.
+  const openPage = (page: Page) => {
+    setPages((ps) => (untouched(active) ? ps.map((p) => (p.id === active.id ? page : p)) : [...ps, page]));
+    setActiveId(page.id);
   };
 
-  const patchTab = (id: string, patch: Partial<Tab>) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  const newRequest = () => openPage(blankPage());
 
-  // Reuses the current tab when it is still a pristine "Untitled".
-  const openTab = (tab: Tab) => {
-    setTabs((ts) => (untouched(active) ? ts.map((t) => (t.id === active.id ? tab : t)) : [...ts, tab]));
-    setActiveId(tab.id);
-  };
-
-  const closeTab = (id: string) => {
-    const index = tabs.findIndex((t) => t.id === id);
-    const rest = tabs.filter((t) => t.id !== id);
-    const next = rest.length ? rest : [blankTab()];
-    setTabs(next);
-    if (id === activeId) setActiveId(next[Math.min(index, next.length - 1)].id);
-  };
+  // Shows the response kept with a history entry.
+  const showRun = (pageId: string, run: string) =>
+    api.historyResponse(run).then((response) => patchPage(pageId, { response, run }), fail);
 
   const openItem = (c: Collection, item: Item) => {
-    const existing = tabs.find((t) => t.source?.itemId === item.id);
+    const existing = pages.find((p) => p.source?.itemId === item.id);
     if (existing) return setActiveId(existing.id);
-    openTab({ ...blankTab(), name: item.name, request: normalizeReq(item.request), source: { collectionId: c.id, itemId: item.id } });
+    const page = { ...blankPage(), name: item.name, request: normalizeReq(item.request), source: { collectionId: c.id, itemId: item.id } };
+    openPage(page);
+    // A request opens with the last response it got, from this session or an earlier one.
+    const last = history.find((h) => h.itemId === item.id);
+    if (last) api.historyResponse(last.id).then((response) => patchPage(page.id, { response, run: last.id }), () => {});
   };
 
-  const changeCollection = (changed: Collection) => {
+  // Pages whose request was deleted go away; there is always one left to show.
+  const prunePages = (keep: (p: Page) => boolean) =>
+    setPages((ps) => {
+      const rest = ps.filter(keep);
+      const next = rest.length ? rest : [blankPage()];
+      setActiveId((id) => (next.some((p) => p.id === id) ? id : next[next.length - 1].id));
+      return next;
+    });
+
+  const putCollection = (c: Collection) => api.putCollection(c).then(refreshWorkspace, fail);
+
+  // Writes are queued per collection so that typing is saved once it pauses, in order.
+  const write = (c: Collection, delay: number) => {
+    clearTimeout(writes.current.get(c.id)?.timer);
+    if (!delay) {
+      writes.current.delete(c.id);
+      putCollection(c);
+      return;
+    }
+    const timer = setTimeout(() => {
+      writes.current.delete(c.id);
+      putCollection(c);
+    }, delay);
+    writes.current.set(c.id, { collection: c, timer });
+  };
+
+  // Before anything that must see every edit on disk: switching workspace, leaving the page.
+  function flushWrites() {
+    writes.current.forEach(({ collection, timer }) => {
+      clearTimeout(timer);
+      api.putCollection(collection).catch(() => {});
+    });
+    writes.current.clear();
+  }
+
+  const changeCollection = (changed: Collection, delay = 0) => {
     const c = { ...changed, items: sortItems(changed.items) };
     setCollections((cs) =>
       (cs.some((x) => x.id === c.id) ? cs.map((x) => (x.id === c.id ? c : x)) : [...cs, c]).sort((a, b) =>
         a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
       ),
     );
-    // Keep open tabs in step with renames and deletes.
-    setTabs((ts) =>
-      ts.map((t) => {
-        if (t.source?.collectionId !== c.id) return t;
-        const item = findItem(c.items, t.source.itemId);
-        return item ? { ...t, name: item.name } : { ...t, source: undefined, dirty: true };
+    // Keep open pages in step with renames and deletes.
+    prunePages((p) => p.source?.collectionId !== c.id || !!findItem(c.items, p.source.itemId));
+    setPages((ps) =>
+      ps.map((p) => {
+        const item = p.source?.collectionId === c.id ? findItem(c.items, p.source.itemId) : undefined;
+        return item && item.name !== p.name ? { ...p, name: item.name } : p;
       }),
     );
-    api.putCollection(c).then(refreshWorkspace, fail);
+    write(c, delay);
+  };
+
+  // changed is from moveItem: the source collection first, then the target if it is another one.
+  const moveItems = (changed: Collection[], itemId: string) => {
+    const to = changed[changed.length - 1];
+    const moved = findItem(to.items, itemId);
+    const ids = new Set(moved ? subtreeIds(moved) : []);
+    // Open pages follow their requests before the source collection is written without them.
+    setPages((ps) => ps.map((p) => (p.source && ids.has(p.source.itemId) ? { ...p, source: { ...p.source, collectionId: to.id } } : p)));
+    [...changed].reverse().forEach((c) => changeCollection(c));
   };
 
   const deleteCollection = (id: string) => {
+    clearTimeout(writes.current.get(id)?.timer);
+    writes.current.delete(id);
     setCollections((cs) => cs.filter((c) => c.id !== id));
-    setTabs((ts) => ts.map((t) => (t.source?.collectionId === id ? { ...t, source: undefined, dirty: true } : t)));
+    prunePages((p) => p.source?.collectionId !== id);
     api.deleteCollection(id).then(refreshWorkspace, fail);
   };
 
-  const send = async (tab: Tab) => {
-    if (tab.sending) return;
-    patchTab(tab.id, { sending: true });
+  // Saves request as a new item of the collection last worked in (or a new
+  // "Requests" collection) and returns where it went.
+  const addRequest = (name: string, request: Req): Pick<Page, 'name' | 'source'> => {
+    const target = collections.find((c) => c.id === lastCollection.current) ?? collections[0];
+    const items = target?.items ?? [];
+    const item: Item = { id: uid(), name: name.trim() || freeName(items, 'New request'), request };
+    const c = target ? { ...target, items: [...items, item] } : { id: uid(), name: 'Requests', items: [item] };
+    lastCollection.current = c.id;
+    changeCollection(c);
+    return { name: item.name, source: { collectionId: c.id, itemId: item.id } };
+  };
+
+  const editRequest = (page: Page, request: Req) => {
+    const c = collections.find((x) => x.id === page.source?.collectionId);
+    if (!page.source || !c) return patchPage(page.id, { request, ...addRequest(page.name, request) });
+    patchPage(page.id, { request });
+    changeCollection({ ...c, items: mapItem(c.items, page.source.itemId, (item) => ({ ...item, request })) }, TYPING_PAUSE);
+  };
+
+  const renamePage = (page: Page, name: string) => {
+    const c = collections.find((x) => x.id === page.source?.collectionId);
+    if (!page.source || !c) return patchPage(page.id, { name });
+    if (name) changeCollection({ ...c, items: mapItem(c.items, page.source.itemId, (item) => ({ ...item, name })) });
+  };
+
+  const send = async (page: Page) => {
+    if (page.sending) return;
+    patchPage(page.id, { sending: true });
     try {
-      const response = await api.send(tab.request, envId, protoOf(grpcSource(collections, tab.source)));
-      patchTab(tab.id, { response, sending: false });
-      setHistory(await api.history());
+      const response = await api.send(page.request, envId, protoOf(grpcSource(collections, page.source)), page.source?.itemId);
+      const h = await api.history();
+      patchPage(page.id, { response, sending: false, run: h[0]?.id });
+      setHistory(h);
       setRuntime(await api.runtimeVariables());
     } catch (e) {
-      patchTab(tab.id, { sending: false, response: errorResponse(e instanceof Error ? e.message : String(e)) });
+      patchPage(page.id, { sending: false, response: errorResponse(e instanceof Error ? e.message : String(e)) });
     }
-  };
-
-  const save = (tab: Tab) => {
-    const c = collections.find((c) => c.id === tab.source?.collectionId);
-    if (!tab.source || !c) return setModal('save');
-    changeCollection({ ...c, items: mapItem(c.items, tab.source.itemId, (item) => ({ ...item, request: tab.request })) });
-    patchTab(tab.id, { dirty: false });
-  };
-
-  const saveAs = (name: string, target: SaveTarget) => {
-    const item: Item = { id: uid(), name, request: active.request };
-    let c: Collection;
-    if ('newCollection' in target) {
-      c = { id: uid(), name: target.newCollection, items: [item] };
-    } else {
-      const base = collections.find((x) => x.id === target.collectionId)!;
-      c = { ...base, items: addItem(base.items, target.folderId, item) };
-    }
-    changeCollection(c);
-    patchTab(active.id, { name, source: { collectionId: c.id, itemId: item.id }, dirty: false });
-    setModal(null);
   };
 
   const saveEnvironments = (next: Environment[]) => {
@@ -219,8 +283,9 @@ export default function App() {
         e.preventDefault();
         send(active);
       } else if (e.key === 's') {
+        // Everything is saved as it is typed; this only writes it out now.
         e.preventDefault();
-        save(active);
+        flushWrites();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -228,6 +293,7 @@ export default function App() {
   });
 
   const openWorkspace = () => {
+    flushWrites();
     refreshWorkspace();
     setModal('repo');
   };
@@ -238,28 +304,40 @@ export default function App() {
   const workspaceChanged = (w: Workspace, switched: boolean) => {
     setWorkspace(w);
     if (switched) {
-      // Open tabs belong to the previous workspace.
-      const tab = blankTab();
-      setTabs([tab]);
-      setActiveId(tab.id);
+      // Open pages belong to the previous workspace.
+      const page = blankPage();
+      lastCollection.current = '';
+      setPages([page]);
+      setActiveId(page.id);
     }
     reload();
   };
 
+  // "Collection / Folder" for a saved request.
+  const whereIs = (page: Page) => {
+    const c = collections.find((x) => x.id === page.source?.collectionId);
+    const folders = c && page.source ? folderPath(c.items, page.source.itemId) : undefined;
+    return c && folders ? [c.name, ...folders].join(' / ') : '';
+  };
+
   const quickActions: QuickAction[] = [
-    { id: 'new', label: 'New request', run: newTab },
+    { id: 'new', label: 'New request', run: newRequest },
     { id: 'import', label: 'Import cURL', detail: 'Paste a command as a new request', run: () => setModal('import') },
+    ...(kindOf(active.request) !== 'grpc' ? [{ id: 'curl', label: 'Copy as cURL', detail: 'This request', run: () => setModal('curl') }] : []),
     { id: 'workspace', label: 'Open workspace', detail: 'Folder, git status, switch workspace', run: openWorkspace },
     ...(workspace?.recent ?? []).map((path) => ({
       id: `workspace-${path}`,
       label: `Switch to workspace ${folderName(path)}`,
       detail: path,
-      run: () => api.openWorkspace(path, false).then((w) => workspaceChanged(w, true), fail),
+      run: () => {
+        flushWrites();
+        api.openWorkspace(path, false).then((w) => workspaceChanged(w, true), fail);
+      },
     })),
     ...[{ id: '', name: 'No environment' }, ...environments]
       .filter((e) => e.id !== envId)
       .map((e) => ({ id: `env-${e.id}`, label: e.id ? `Switch to ${e.name}` : 'Switch to no environment', detail: 'Environment', run: () => setEnvId(e.id) })),
-    { id: 'envs', label: 'Edit environments', detail: 'Variables', run: () => setModal('env') },
+    { id: 'envs', label: 'Manage environments', detail: 'Variables', run: () => setModal('env') },
     { id: 'sidebar', label: sidebarHidden ? 'Show sidebar' : 'Hide sidebar', keys: KEYS.sidebar, run: () => setSidebarHidden(!sidebarHidden) },
     ...(roomForColumns
       ? [{ id: 'layout', label: stacked ? 'Request and response side by side' : 'Response under the request', detail: 'Layout', run: () => setStacked(!stacked) }]
@@ -275,43 +353,34 @@ export default function App() {
           active={!sidebarHidden}
           onClick={() => setSidebarHidden(!sidebarHidden)}
         />
-        <div className="mr-1 flex items-center gap-2 select-none">
+        <span className="mx-1 select-none text-fg">
           <Logo />
-          <span className="font-semibold tracking-tight">Roundtrip</span>
-        </div>
+        </span>
         {workspace && (
           <button
             className={`${ghostBtnCls} min-w-0 shrink text-fg`}
             title={`${workspace.path}\nWorkspace folder and git status`}
             onClick={openWorkspace}
           >
-            <span className="text-muted">
-              <Icon name={workspace.git.repo ? 'branch' : 'folder'} />
-            </span>
             <span className="truncate">{folderName(workspace.path)}</span>
             {workspace.git.repo && (
               <span className="shrink-0 text-xs tabular-nums text-muted">
-                {changeCount > 0 ? `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}` : (workspace.git.branch || 'clean')}
+                {changeCount > 0 ? `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}` : workspace.git.branch}
               </span>
             )}
           </button>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <button className={`${ghostBtnCls} gap-2`} onClick={() => setModal('quick')} title={`Go to a request or run an action (${keyLabel(KEYS.quickOpen)})`}>
-            <Icon name="search" size={13} />
-            Go to
-            <Kbd keys={KEYS.quickOpen} />
-          </button>
-          <button className={ghostBtnCls} onClick={() => setModal('import')} title="Import a cURL command as a new request">
-            Import cURL
-          </button>
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          <IconButton icon="filePlus" title="New request" onClick={newRequest} />
+          <IconButton icon="search" title={`Go to a request or run a command (${keyLabel(KEYS.quickOpen)})`} onClick={() => setModal('quick')} />
           <Select
-            className="ml-1 w-44"
+            bare
+            className="ml-1"
             selectClassName={envId ? '' : 'text-muted'}
             value={envId}
-            onChange={(e) => setEnvId(e.target.value)}
-            title="Active environment"
-            aria-label="Active environment"
+            onChange={(e) => (e.target.value === MANAGE_ENVIRONMENTS ? setModal('env') : setEnvId(e.target.value))}
+            title="Environment"
+            aria-label="Environment"
           >
             <option value="">No environment</option>
             {environments.map((e) => (
@@ -319,10 +388,9 @@ export default function App() {
                 {e.name}
               </option>
             ))}
+            <option disabled>──────────</option>
+            <option value={MANAGE_ENVIRONMENTS}>Manage environments…</option>
           </Select>
-          <button className={ghostBtnCls} onClick={() => setModal('env')} title="Edit environments and their variables">
-            Environments
-          </button>
         </div>
       </header>
 
@@ -334,8 +402,13 @@ export default function App() {
           history={history}
           activeItemId={active.source?.itemId}
           onOpen={openItem}
-          onOpenHistory={(h) => openTab({ ...blankTab(), name: 'From history', request: normalizeReq(h.request), dirty: true })}
+          onOpenHistory={(h) => {
+            const page = { ...blankPage(), request: normalizeReq(h.request) };
+            openPage(page);
+            showRun(page.id, h.id);
+          }}
           onChange={changeCollection}
+          onMove={moveItems}
           onDelete={deleteCollection}
           onProto={(c) => setProtoFor(c.id)}
           onClearHistory={() => {
@@ -355,75 +428,22 @@ export default function App() {
         )}
 
         <main className="flex-1 flex flex-col min-w-0">
-          <div role="tablist" aria-label="Open requests" className="flex h-9 shrink-0 items-stretch bg-panel overflow-x-auto [scrollbar-width:none]"
-            onWheel={(e) => {
-              // A plain mouse wheel scrolls the strip sideways.
-              if (!e.deltaX) e.currentTarget.scrollLeft += e.deltaY;
-            }}
-          >
-            {tabs.map((t) => {
-              const current = t.id === active.id;
-              return (
-                <div
-                  key={t.id}
-                  id={`tab-${t.id}`}
-                  role="tab"
-                  tabIndex={0}
-                  aria-selected={current}
-                  title={t.name}
-                  onClick={() => setActiveId(t.id)}
-                  onAuxClick={(e) => e.button === 1 && closeTab(t.id)}
-                  onKeyDown={(e) => e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && setActiveId(t.id)}
-                  className={`group relative flex min-w-28 max-w-56 shrink-0 scroll-mx-10 items-center gap-1.5 border-r border-line pl-3 pr-1.5 transition-colors duration-100 focus-visible:-outline-offset-2 ${
-                    current ? 'bg-bg text-fg' : 'border-b text-muted hover:bg-hover hover:text-fg'
-                  }`}
-                >
-                  <Method request={t.request} />
-                  <span className="flex-1 truncate">{t.name}</span>
-                  <span className="relative grid size-6 shrink-0 place-items-center">
-                    {t.dirty && <span className="size-1.5 rounded-full bg-muted group-hover:opacity-0 group-focus-within:opacity-0" title="Unsaved changes" />}
-                    <span
-                      className={`absolute inset-0 group-hover:opacity-100 group-focus-within:opacity-100 ${current && !t.dirty ? '' : 'opacity-0'}`}
-                    >
-                      <IconButton icon="x" title="Close tab" onClick={() => closeTab(t.id)} />
-                    </span>
-                  </span>
-                </div>
-              );
-            })}
-            <div className="sticky right-0 flex items-center border-b border-line bg-panel px-1.5">
-              <IconButton icon="plus" title="New request" onClick={newTab} />
-            </div>
-            <div className="flex-1 border-b border-line" />
-          </div>
-
-          <AddressBar
+          <PageTitle
             key={active.id}
+            name={active.name}
+            where={whereIs(active)}
+            onRename={(name) => renamePage(active, name)}
+          />
+          <AddressBar
+            key={`bar-${active.id}`}
             request={active.request}
             sending={active.sending}
-            dirty={active.dirty}
-            onChange={(request) => patchTab(active.id, { request, dirty: true })}
+            onChange={(request) => editRequest(active, request)}
             onSend={() => send(active)}
-            onSave={() => save(active)}
-            onCurl={() => setModal('curl')}
             grpcSource={activeSource.kind}
             onProtoSettings={() => setProtoFor(active.source?.collectionId ?? null)}
             onLoadMethods={() => api.grpcMethods(active.request, envId, protoOf(activeSource))}
             onDescribe={describeMethod}
-            trailing={
-              <IconButton
-                icon={columns ? 'rows' : 'columns'}
-                disabled={!roomForColumns}
-                title={
-                  !roomForColumns
-                    ? 'Not enough room to put the response beside the request'
-                    : columns
-                      ? 'Put the response under the request'
-                      : 'Put the response beside the request'
-                }
-                onClick={() => setStacked(!stacked)}
-              />
-            }
           />
 
           <div ref={pairRef} className={`flex min-h-0 flex-1 ${columns ? '' : 'flex-col'}`}>
@@ -431,7 +451,7 @@ export default function App() {
               <RequestEditor
                 key={active.id}
                 request={active.request}
-                onChange={(request) => patchTab(active.id, { request, dirty: true })}
+                onChange={(request) => editRequest(active, request)}
                 grpcSource={activeSource.kind}
                 onDescribe={describeMethod}
               />
@@ -462,7 +482,14 @@ export default function App() {
               />
             )}
             <div className="min-h-0 min-w-0 flex-1">
-              <ResponseView key={active.id} res={active.response} sending={active.sending} />
+              <ResponseView
+                key={active.id}
+                res={active.response}
+                sending={active.sending}
+                runs={active.source ? history.filter((h) => h.itemId === active.source!.itemId) : []}
+                run={active.run}
+                onRun={(run) => showRun(active.id, run)}
+              />
             </div>
           </div>
         </main>
@@ -506,7 +533,8 @@ export default function App() {
           onClose={() => setModal(null)}
           onCurl={(request) => {
             setModal(null);
-            openTab({ ...blankTab(), name: 'Imported cURL', request: normalizeReq(request), dirty: true });
+            const imported = normalizeReq(request);
+            openPage({ ...blankPage(), request: imported, ...addRequest('', imported) });
           }}
         />
       )}
@@ -524,14 +552,40 @@ export default function App() {
         />
       )}
       {modal === 'curl' && <CurlModal request={active.request} environmentId={envId} onClose={() => setModal(null)} />}
-      {modal === 'save' && (
-        <SaveModal
-          collections={collections}
-          defaultName={active.name === 'Untitled' ? '' : active.name}
-          onClose={() => setModal(null)}
-          onSave={saveAs}
-        />
-      )}
+    </div>
+  );
+}
+
+// The request's name, at the head of the page like a document title. Renamed in place.
+function PageTitle({ name, where, onRename }: { name: string; where: string; onRename: (name: string) => void }) {
+  const [value, setValue] = useState(name);
+  useEffect(() => {
+    setValue(name);
+  }, [name]);
+  const commit = () => {
+    const next = value.trim();
+    if (next && next !== name) onRename(next);
+    else setValue(name);
+  };
+  return (
+    <div className="flex shrink-0 items-baseline gap-3 px-4 pt-4">
+      <input
+        className="min-w-0 flex-1 bg-transparent text-lg font-semibold tracking-tight outline-none placeholder:text-faint"
+        value={value}
+        placeholder="Untitled"
+        aria-label="Request name"
+        spellCheck={false}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') {
+            setValue(name);
+            requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+          }
+        }}
+      />
+      {where && <span className="max-w-[45%] shrink-0 truncate text-xs text-muted">{where}</span>}
     </div>
   );
 }

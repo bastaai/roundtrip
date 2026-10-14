@@ -1,31 +1,33 @@
 import { useMemo, useState } from 'react';
-import { formatSize, highlightJson, prettyJson } from '../lib/request';
-import type { Res } from '../types';
-import { Count, ghostBtnCls, Icon, Kbd, KEYS, Segmented, Spinner, statusColor, Tabs, useCopied } from './ui';
+import { foldAll, jsonLines, toggleFold, visibleLines, type JsonLine } from '../lib/json';
+import { formatSize, formatTime, prettyJson, runLabel } from '../lib/request';
+import type { HistoryEntry, Res } from '../types';
+import { Count, ghostBtnCls, Icon, Kbd, KEYS, Segmented, Select, Spinner, statusColor, Tabs, useCopied } from './ui';
 
-const HIGHLIGHT_LIMIT = 500_000;
+// Above this the body is shown as plain text: thousands of foldable lines get slow.
+const TREE_LIMIT = 500_000;
 const preCls = 'p-3 font-mono text-xs leading-[1.6] whitespace-pre-wrap break-all';
 
 const SHORTCUTS: [string[], string][] = [
   [KEYS.send, 'Send'],
-  [KEYS.save, 'Save'],
-  [KEYS.quickOpen, 'Go to a request'],
+  [KEYS.quickOpen, 'Go to a request or run a command'],
   [KEYS.sidebar, 'Hide or show the sidebar'],
 ];
 
-const formatTime = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`);
-
-export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) {
+// runs are this request's earlier sends, newest first; run is the one shown.
+export function ResponseView(p: { res?: Res; sending: boolean; runs: HistoryEntry[]; run?: string; onRun: (id: string) => void }) {
+  const { res, sending } = p;
   const [tab, setTab] = useState<'body' | 'headers' | 'tests'>('body');
   const [pretty, setPretty] = useState(true);
   const [copied, copy] = useCopied();
 
   const formatted = useMemo(() => (res && !res.base64 ? prettyJson(res.body) : null), [res]);
   const text = pretty && formatted !== null ? formatted : (res?.body ?? '');
-  const html = useMemo(
-    () => (formatted !== null && text.length < HIGHLIGHT_LIMIT ? highlightJson(text) : null),
-    [formatted, text],
-  );
+  const lines = useMemo(() => (res && formatted !== null && formatted.length < TREE_LIMIT ? jsonLines(JSON.parse(res.body)) : null), [res, formatted]);
+  // Folds belong to the lines they were made on, so a new response starts unfolded.
+  const [fold, setFold] = useState<{ lines: JsonLine[] | null; set: Set<number> }>({ lines: null, set: new Set() });
+  const folded = fold.lines === lines ? fold.set : new Set<number>();
+  const setFolded = (set: Set<number>) => setFold({ lines, set });
 
   if (!res) {
     return (
@@ -99,6 +101,7 @@ export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) 
         <span className="shrink-0 text-muted" title="Size">
           {formatSize(res.size)}
         </span>
+        {p.runs.length > 1 && <Runs runs={p.runs} run={p.run} onRun={p.onRun} />}
       </Heading>
       <Tabs
         active={view}
@@ -126,6 +129,15 @@ export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) 
           view === 'body' &&
           !res.base64 && (
             <>
+              {lines && pretty && lines.some((l) => l.kind === 'open' && l.depth > 0) && (
+                <button
+                  className={ghostBtnCls}
+                  onClick={() => setFolded(folded.size ? new Set() : foldAll(lines))}
+                  title={folded.size ? 'Expand everything' : 'Collapse everything below the top level'}
+                >
+                  {folded.size ? 'Expand all' : 'Collapse all'}
+                </button>
+              )}
               {formatted !== null && (
                 <Segmented
                   label="Body format"
@@ -183,15 +195,86 @@ export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) 
           )
         ) : res.base64 ? (
           <p className="p-3 text-muted">Binary response ({formatSize(res.size)}), not shown.</p>
+        ) : res.bodyNotKept ? (
+          <p className="p-3 text-muted">The body was larger than 1 MB, so it was not kept with the history.</p>
         ) : res.body === '' ? (
           <p className="p-3 text-muted">The response body is empty.</p>
-        ) : html !== null && pretty ? (
-          <pre className={preCls} dangerouslySetInnerHTML={{ __html: html }} />
+        ) : lines && pretty ? (
+          <JsonTree lines={lines} folded={folded} onToggle={(i, deep) => setFolded(toggleFold(lines, folded, i, deep))} />
         ) : (
           <pre className={preCls}>{text}</pre>
         )}
       </div>
     </Column>
+  );
+}
+
+const tokenCls: Record<JsonLine['kind'], string> = { str: 'json-str', num: 'json-num', lit: 'json-lit', empty: '', open: '', close: '' };
+
+// Pretty JSON with a fold toggle on every object and array. Alt-click folds or unfolds everything inside.
+function JsonTree({ lines, folded, onToggle }: { lines: JsonLine[]; folded: ReadonlySet<number>; onToggle: (i: number, deep: boolean) => void }) {
+  return (
+    <div className="py-3 pr-3 font-mono text-xs leading-[1.6]">
+      {visibleLines(lines, folded).map((i) => {
+        const l = lines[i];
+        const close = folded.has(i) ? lines[l.end!] : null;
+        const indent = `${l.depth * 2}ch`;
+        return (
+          <div key={i} className="relative whitespace-pre-wrap break-all" style={{ paddingLeft: `calc(${indent} + 1.5rem)` }}>
+            {l.kind === 'open' && (
+              <button
+                className="absolute top-0 flex h-[1.6em] w-5 select-none items-center justify-center rounded text-faint hover:text-fg"
+                style={{ left: `calc(${indent} + 0.25rem)` }}
+                onClick={(e) => onToggle(i, e.altKey)}
+                aria-expanded={!close}
+                aria-label={close ? 'Expand' : 'Collapse'}
+                title={`${close ? 'Expand' : 'Collapse'} (Alt-click: everything inside)`}
+              >
+                <Icon name={close ? 'chevron' : 'chevronDown'} size={11} strokeWidth={2.5} />
+              </button>
+            )}
+            {l.key && (
+              <>
+                <span className="json-key">{l.key}</span>:{' '}
+              </>
+            )}
+            <span className={tokenCls[l.kind]}>{l.text}</span>
+            {close && (
+              <>
+                <button className="mx-1 rounded bg-hover px-1 text-muted hover:text-fg" onClick={(e) => onToggle(i, e.altKey)} title="Expand">
+                  {l.size} {l.text === '{' ? (l.size === 1 ? 'key' : 'keys') : l.size === 1 ? 'item' : 'items'}
+                </button>
+                {close.text}
+              </>
+            )}
+            {(close ?? l).comma && ','}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// The request's earlier responses. Choosing one shows it in place of the latest.
+function Runs({ runs, run, onRun }: { runs: HistoryEntry[]; run?: string; onRun: (id: string) => void }) {
+  const value = runs.some((h) => h.id === run) ? run! : '';
+  return (
+    <Select
+      bare
+      className="ml-auto self-center"
+      selectClassName="text-xs text-muted"
+      value={value}
+      onChange={(e) => onRun(e.target.value)}
+      title="Earlier responses to this request"
+      aria-label="Earlier responses"
+    >
+      {!value && <option value="">This session</option>}
+      {runs.map((h, i) => (
+        <option key={h.id} value={h.id}>
+          {i === 0 ? `Latest · ${runLabel(h)}` : runLabel(h)}
+        </option>
+      ))}
+    </Select>
   );
 }
 

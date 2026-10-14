@@ -1,6 +1,6 @@
 # File format
 
-A workspace is a folder. Everything Roundtrip commits lives under `collections/`, as YAML files you can read, edit by hand and review in a pull request.
+A workspace is a folder. Everything Roundtrip saves there lives under `collections/`, as YAML files you can read, edit by hand and review in a pull request.
 
 ## Layout
 

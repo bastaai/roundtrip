@@ -17,11 +17,33 @@ A collection with proto files configured always uses them. A collection without 
    | `grpc://localhost:50051` or `localhost:50051` | Plaintext |
    | `grpcs://api.example.com:443` | TLS |
 
-3. Enter the method as `package.Service/Method`, or choose **Load methods** to list what is available and pick one.
-4. Write the request message as JSON in the **Message** tab. An empty message is `{}`.
+3. Enter the method as `package.Service/Method`. The field suggests the available methods as you type: straight away when the collection uses proto files, and after you choose **Load methods** when it uses server reflection.
+4. Write the request message as JSON in the **Message** tab. An empty message is `{}`. See [Example messages](#example-messages) for a head start.
 5. Send.
 
 The response shows the gRPC status, the response message as JSON, and the response metadata. A non-OK status such as `NotFound` is shown as a response with its message, not as a failure to send.
+
+### Example messages
+
+Roundtrip can write the request message for you from the method's definition. Choosing a method fills the **Message** tab with an example when the editor is still empty, and **Insert example message** does the same on demand, replacing what is there.
+
+The example contains every field of the request type with an empty value, in the order the proto file declares them, so you can see the shape and fill in what you need:
+
+```json
+{
+  "customerId": "",
+  "amount": {
+    "currency": "",
+    "units": "0"
+  },
+  "method": "METHOD_UNSPECIFIED",
+  "tags": [
+    ""
+  ]
+}
+```
+
+Repeated fields and maps get one entry to show what goes in them, and only the first option of a `oneof` is included. Remove what you do not want to send. Field names and values follow the standard JSON mapping for Protocol Buffers: names are camelCase, 64-bit integers are strings, and enums are written by name.
 
 **Metadata** is the gRPC equivalent of headers and has its own tab. The **Auth** tab works as it does for HTTP: a bearer token is sent as `authorization` metadata.
 
@@ -35,6 +57,8 @@ Hover the collection in the sidebar and choose **Proto files for gRPC**. There a
 |---|---|
 | **Import roots** | Folders that imports are resolved from. The equivalent of `-I` for `protoc`. |
 | **Files** | Proto files to load, written relative to a root. Leave this empty to load every `.proto` file found under the roots. |
+
+Type a path into either list, or use **Browse for a folder…** and **Browse for .proto files…** to pick them. The file browser opens in your first import root and lets you select several files at once. What you pick is saved in its portable form: a folder inside the workspace becomes a relative path, and a file becomes a path relative to the import root that contains it.
 
 Choose **Check** to compile the configuration before saving. It reports the number of files, services and methods found, or the exact error.
 

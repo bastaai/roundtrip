@@ -1,68 +1,79 @@
-# Git sync
+# Source control
 
-Roundtrip keeps your collections in an ordinary git repository. You can use git yourself, or let Roundtrip commit, push and pull from the interface.
+Roundtrip saves your requests as plain YAML files in a folder you choose. Put that folder inside a git repository and your requests are versioned, reviewed and shared exactly like your code. There is no account to connect and nothing to sync with a service.
 
-Roundtrip runs the `git` installed on your machine, so it uses the SSH keys or credential helper you already have. There is no separate sign-in.
+## Choosing the folder
 
-## Connecting a repository
+The folder Roundtrip saves to is called the **workspace**. Its name is shown in the header; select it to see the full path and to open a different folder.
 
-Choose **Connect GitHub** in the header (or the repository name, once connected) and paste an address:
+Use any folder inside a repository. A common layout keeps the requests next to the service they belong to:
 
 ```
-git@github.com:your-org/api-requests.git
-https://github.com/your-org/api-requests.git
+my-service/
+  src/
+  api-requests/          <- the workspace
+    collections/
+      Users API/
+        _collection.yaml
+        List users.yaml
 ```
 
-Roundtrip clones the repository into its data folder and switches to it. If the repository has no collections yet and you already created some, they are copied in so you can commit them.
+You can open a workspace in three ways:
 
-Any git host works; the address does not have to be on GitHub.
+- In the workspace dialog, enter the full path under **Open another folder**, or use **Browse…** to pick the folder.
+- Start Roundtrip with the folder as an argument: `roundtrip ~/code/my-service/api-requests`.
+- Start Roundtrip without an argument to reopen the folder you used last.
 
-### Using a folder you already cloned
+The folder is created if it does not exist.
 
-If you prefer to manage the clone yourself, enter its full path under **open a folder you already cloned**, or start Roundtrip with the folder as an argument:
+### Switching between workspaces
 
-```sh
-roundtrip ~/code/api-requests
-```
+You can keep requests in several places, for example one folder per service. Roundtrip remembers the folders you have opened. They are listed under **Switch workspace** in the workspace dialog, and as *Switch to workspace …* actions in **Go to** (<kbd>⌘</kbd><kbd>K</kbd> / <kbd>Ctrl</kbd><kbd>K</kbd>); select one to switch to it. A folder that has been moved or deleted drops off the list. Each workspace has its own collections, environments and history.
 
-The workspace can also be a subfolder of a larger repository, for example `my-service/api-requests`.
+### Moving existing requests into a repository
 
-## Committing and pushing
+If you started in one folder and want to continue in another, tick **Copy my current collections into it** before opening the new folder. The copy only happens when the new folder has no collections yet, so existing work is never overwritten. Your environments follow on your machine.
 
-The header shows how many changes are waiting. Open the repository dialog to see the changed files, write a commit message and choose **Commit & push**.
+## Committing
 
-Roundtrip then:
+Roundtrip detects when the workspace is inside a git repository. The header then shows the number of uncommitted changes, and the workspace dialog lists the changed files.
 
-1. commits the changes under `collections/`
-2. pulls and rebases onto the remote branch
-3. pushes
+You can commit in whichever way you prefer:
 
-Only files under `collections/` are ever staged. Other changes in the same repository are left exactly as they are, which makes it safe to keep requests next to your code.
+- **With git**, as you would any other change:
 
-## Pulling
+  ```sh
+  git add api-requests
+  git commit -m "Add user requests"
+  ```
 
-Choose **Pull** in the repository dialog to fetch your teammates' changes. Roundtrip reads the workspace from disk each time, so pulling from a terminal works too; use the reload button at the top of the sidebar to refresh.
+- **From Roundtrip**: write a message in the workspace dialog and choose **Commit**. If the repository has a remote named `origin`, the button reads **Commit & push**: it commits, rebases onto the remote branch and pushes. **Pull** fetches your teammates' changes.
+
+Committing from Roundtrip is a convenience and entirely optional. It only ever stages files under `collections/`; other changes in the repository are left exactly as they are. It runs the `git` installed on your machine, so it uses the credentials you already have.
+
+Roundtrip reads the workspace from disk each time it needs it, so changes made outside the app, such as a `git pull` or `git checkout` in a terminal, are picked up. Use the reload button at the top of the sidebar to refresh the view.
 
 ## Conflicts
 
-If your changes and the remote's touch the same lines, the sync stops, your files are left as they were, and the error explains what happened. Resolve the conflict with git in the workspace folder, then sync again.
+Each request is its own file, so two people only conflict when they edit the same request. Resolve the conflict with git as usual. If a file still contains conflict markers, Roundtrip reports it by path when the workspace loads.
 
-Because each request is its own file, conflicts only happen when two people edit the same request.
+When you commit from Roundtrip and the remote has conflicting changes, the operation stops, your files are left as they were, and the error explains what happened.
 
-## What is and is not committed
+## What is and is not in the repository
 
-| In the repository | On your machine only |
+| In the workspace folder | On your machine only |
 |---|---|
 | Collections, folders and requests | Environments and their values |
 | Tests and saved-value rules | History |
 | Proto configuration of each collection | Values captured during a session |
 
-See [File format](file-format.md) for the layout.
+Secrets belong in environments, which never enter the workspace. See [File format](file-format.md) for the layout and [Variables and environments](variables.md#where-environments-are-stored) for where local data is kept.
 
 ## Troubleshooting
 
 | Message | Cause |
 |---|---|
-| `git is not installed` | Install git and restart Roundtrip |
-| Authentication errors when cloning or pushing | Roundtrip cannot prompt for a password. Make sure `git clone` of the same address works in a terminal without asking, using an SSH key or a credential helper. |
+| The dialog says the folder is not in a git repository | Open a folder inside a repository, or run `git init` in it |
+| `git was not found on this machine` | Requests are still saved as files. Install git to see changes and commit from Roundtrip. |
+| Authentication errors when pushing or pulling | Roundtrip cannot prompt for a password. Make sure `git push` works in a terminal without asking, using an SSH key or a credential helper. |
 | `Please tell me who you are` | Set your identity with `git config --global user.name` and `user.email` |

@@ -7,7 +7,7 @@
 
 <p align="center">
   A fast, local API client for HTTP, GraphQL and gRPC.<br>
-  Your requests are plain files in a git repository you own.
+  Your requests are plain, readable files that live in your own git repository.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 ## Why Roundtrip
 
 - **Your requests live in git.** Every request is one readable YAML file. Review changes in a pull request, branch them with your code, and roll them back like anything else.
-- **No account, no cloud.** Roundtrip runs entirely on your machine. Nothing is uploaded anywhere unless you push it to your own repository.
+- **No account, no cloud.** Roundtrip runs entirely on your machine and saves to a folder you choose. There is nothing to sign in to or connect.
 - **Secrets stay local.** Environments and their values are stored on your machine only and are never written to the repository.
 - **One tool for three protocols.** HTTP, GraphQL and gRPC (with `.proto` files or server reflection) share the same collections, variables and tests.
 - **Runs in CI.** The same binary runs your collections from the terminal and exits non-zero when a check fails.
@@ -36,12 +36,13 @@
 |---|---|
 | **Requests** | Methods, query parameters, headers, JSON / text / form bodies, Bearer, Basic and API-key auth |
 | **GraphQL** | Query and variables editors |
-| **gRPC** | Unary calls using local `.proto` files with import roots, or server reflection |
+| **gRPC** | Unary calls using local `.proto` files with import roots, or server reflection; method suggestions and generated example messages |
 | **Collections** | Nested folders, tabs, history, cURL import and export |
+| **Navigation** | Jump to any request with <kbd>⌘</kbd><kbd>K</kbd>, filter the tree, switch between workspaces |
 | **Variables** | `{{name}}` in URLs, headers, auth, bodies and proto paths; multiple environments |
 | **Tests** | Declarative checks on status, headers, body fields and timing |
 | **Chaining** | Save a value from one response and use it in the next request |
-| **Git sync** | Connect a repository, review changes, commit, push and pull from the app |
+| **Source control** | Saves to any folder in a git repository; shows uncommitted changes and can commit for you |
 | **CLI** | `roundtrip run` for terminals and CI pipelines |
 | **Desktop** | Native window on macOS; runs in any browser on macOS, Windows and Linux |
 
@@ -57,13 +58,13 @@ make build
 
 You need [Go](https://go.dev/dl/) 1.26 or newer, [Node.js](https://nodejs.org/) 22 or newer with [pnpm](https://pnpm.io/), and git.
 
-Start it on a folder for your requests:
+Start it on a folder for your requests, ideally one inside a git repository:
 
 ```sh
-./roundtrip ~/api-requests
+./roundtrip ~/code/my-service/api-requests
 ```
 
-Roundtrip opens in your browser. Create a collection, add a request and press <kbd>⌘</kbd><kbd>↵</kbd> (<kbd>Ctrl</kbd><kbd>Enter</kbd> on Windows and Linux) to send it. To share your requests, choose **Connect GitHub** and paste a repository address.
+Roundtrip opens in your browser. Create a collection, add a request and press <kbd>⌘</kbd><kbd>↵</kbd> (<kbd>Ctrl</kbd><kbd>Enter</kbd> on Windows and Linux) to send it. Everything you save lands in that folder as YAML, ready to commit.
 
 On macOS you can build the native app instead:
 
@@ -123,7 +124,7 @@ The exit status is `0` when everything passed and `1` when a request failed, so 
 | [gRPC](docs/grpc.md) | Proto files, import roots, reflection |
 | [Variables and environments](docs/variables.md) | `{{variables}}`, environments, where values are stored |
 | [Tests and chaining](docs/tests.md) | Checks on responses, saving values for later requests |
-| [Git sync](docs/git-sync.md) | Connecting a repository, committing, pulling, conflicts |
+| [Source control](docs/git-sync.md) | Choosing the folder, committing, conflicts, what stays local |
 | [CLI](docs/cli.md) | `roundtrip run`, CI usage, exit codes |
 | [File format](docs/file-format.md) | Workspace layout and the request file reference |
 | [Development](docs/development.md) | Architecture, building, testing, contributing |

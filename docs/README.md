@@ -12,7 +12,7 @@ Roundtrip is a local API client for HTTP, GraphQL and gRPC that stores your requ
 - [gRPC](grpc.md): calling gRPC methods with `.proto` files or server reflection.
 - [Variables and environments](variables.md): `{{variables}}` and switching between environments.
 - [Tests and chaining](tests.md): checking responses and passing values between requests.
-- [Git sync](git-sync.md): sharing collections through a repository.
+- [Source control](git-sync.md): keeping your requests in a git repository.
 
 ## Automation
 

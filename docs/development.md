@@ -17,7 +17,7 @@ internal/
   check/        tests and value extraction, evaluated against a response
   runner/       sends one request end to end; the `roundtrip run` command
   curl/         cURL parsing and export
-  gitsync/      status, clone, pull, commit and push through the system git
+  gitsync/      git status, pull, commit and push through the system git
   api/          the JSON API, the localhost-only guard, the embedded interface
 web/            React, TypeScript, Vite and Tailwind CSS
   src/lib/          pure logic with unit tests
@@ -55,7 +55,7 @@ The interface bundle in `web/dist` is embedded into the binary, so it must exist
 
 ### Working without touching your own data
 
-Pass `-data` and a scratch workspace so that development runs never read or write your real environments, history or cloned repositories:
+Pass `-data` and a scratch workspace so that development runs never read or write your real environments or history:
 
 ```sh
 ./roundtrip -no-open -addr 127.0.0.1:8899 -data /tmp/rt-data /tmp/rt-workspace

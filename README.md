@@ -135,3 +135,7 @@ Roundtrip is pre-release software. It is usable day to day, but file formats and
 ## Contributing
 
 Contributions are welcome. [Development](docs/development.md) explains how the project is laid out and how to build and test it. For anything larger than a small fix, please open an issue first so the approach can be agreed before you invest time in it.
+
+## License
+
+Roundtrip is released under the [MIT License](LICENSE).

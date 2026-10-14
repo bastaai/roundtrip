@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { kindOf, METHODS, parseQuery, prettyJson, setKind, setQuery } from '../lib/request';
-import type { GrpcSource } from '../lib/proto';
-import type { Auth, Body, Kind, Req } from '../types';
+import { isBlankMessage, type GrpcSource } from '../lib/proto';
+import type { Auth, Body, GrpcMethodInfo, Kind, Req } from '../types';
 import { KVEditor } from './KVEditor';
 import { TestsEditor } from './TestsEditor';
 import { btnCls, Count, Dot, fieldCls, ghostBtnCls, inputCls, keyLabel, KEYS, methodColor, primaryBtnCls, Segmented, Select, Spinner, Tabs } from './ui';
 
-type Props = {
+type BarProps = {
   request: Req;
   sending: boolean;
   dirty: boolean;
@@ -17,6 +17,10 @@ type Props = {
   grpcSource: GrpcSource['kind'];
   onProtoSettings: () => void;
   onLoadMethods: () => Promise<string[]>;
+  // Message types and an example message for a method of this request's server.
+  onDescribe: (method: string) => Promise<GrpcMethodInfo>;
+  // quiet controls at the far end of the row
+  trailing?: React.ReactNode;
 };
 
 type TabId = 'params' | 'headers' | 'auth' | 'body' | 'tests';
@@ -25,8 +29,123 @@ const CONTENT_TYPES = ['application/json', 'text/plain', 'application/xml', 'tex
 const textareaCls = `${fieldCls} flex-1 min-h-24 py-1.5 font-mono text-xs resize-none`;
 const KIND_COLOR: Record<Kind, string> = { http: '', graphql: 'text-m-graphql', grpc: 'text-m-grpc' };
 
-export function RequestEditor({ request, sending, dirty, onChange, onSend, onSave, onCurl, grpcSource, onProtoSettings, onLoadMethods }: Props) {
+// Where the round trip starts: protocol, method, address and Send in one field across the whole main area.
+export function AddressBar({ request, sending, dirty, onChange, onSend, onSave, onCurl, grpcSource, onProtoSettings, onLoadMethods, onDescribe, trailing }: BarProps) {
+  const kind = kindOf(request);
+  // Choosing a known method fills in an example of its request message, as
+  // long as that does not overwrite something the user wrote.
+  const chooseMethod = async (method: string, known: boolean) => {
+    onChange({ ...request, method });
+    if (!known || !isBlankMessage(request.body.raw)) return;
+    try {
+      const { template } = await onDescribe(method);
+      onChange({ ...request, method, body: { ...request.body, raw: template } });
+    } catch {
+      // The example is a convenience; sending the request reports real problems.
+    }
+  };
+  return (
+    <div className="shrink-0 border-b border-line">
+      <div className="flex items-center gap-1 px-3 py-2.5">
+        <div className="mr-1 flex h-9 min-w-0 flex-1 items-stretch rounded-lg border border-line bg-raised p-[3px] transition-[border-color,box-shadow] duration-100 hover:border-line-strong focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/25">
+          <Select
+            bare
+            className="shrink-0"
+            selectClassName={KIND_COLOR[kind] || 'text-muted'}
+            value={kind}
+            onChange={(e) => onChange(setKind(request, e.target.value as Kind))}
+            title="Protocol"
+            aria-label="Protocol"
+          >
+            <option value="http">HTTP</option>
+            <option value="graphql">GraphQL</option>
+            <option value="grpc">gRPC</option>
+          </Select>
+          {kind !== 'grpc' && (
+            <Select
+              bare
+              className="shrink-0"
+              selectClassName={`font-medium ${methodColor(request.method)}`}
+              value={request.method}
+              onChange={(e) => onChange({ ...request, method: e.target.value })}
+              title="Method"
+              aria-label="Method"
+            >
+              {(METHODS.includes(request.method) ? METHODS : [...METHODS, request.method]).map((m) => (
+                <option key={m}>{m}</option>
+              ))}
+            </Select>
+          )}
+          <input
+            autoFocus
+            className="min-w-0 flex-1 bg-transparent px-2.5 font-mono text-[13px] outline-none placeholder:font-sans placeholder:text-faint"
+            aria-label={kind === 'grpc' ? 'Server address' : 'URL'}
+            spellCheck={false}
+            placeholder={
+              kind === 'grpc'
+                ? 'grpc://localhost:50051 (grpcs:// for TLS)'
+                : kind === 'graphql'
+                  ? 'https://api.example.com/graphql'
+                  : 'https://api.example.com/users or {{baseUrl}}/users'
+            }
+            value={request.url}
+            onChange={(e) => onChange({ ...request, url: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && onSend()}
+          />
+          <button className={`${primaryBtnCls} h-full w-[72px] rounded-[5px]`} disabled={sending} onClick={onSend} title={`Send (${keyLabel(KEYS.send)})`}>
+            {sending ? <Spinner size={13} /> : 'Send'}
+          </button>
+        </div>
+        <button className={`${ghostBtnCls} ${dirty ? 'text-fg' : ''}`} onClick={onSave} title={`Save${dirty ? ' changes' : ''} (${keyLabel(KEYS.save)})`}>
+          Save
+          {dirty && <span className="size-1.5 rounded-full bg-muted" />}
+        </button>
+        {kind !== 'grpc' && (
+          <button className={ghostBtnCls} onClick={onCurl} title="Copy as cURL">
+            cURL
+          </button>
+        )}
+        {trailing}
+      </div>
+
+      {kind === 'grpc' && (
+        <GrpcMethod
+          key={grpcSource}
+          method={request.method}
+          source={grpcSource}
+          onChange={chooseMethod}
+          onSettings={onProtoSettings}
+          onLoad={onLoadMethods}
+        />
+      )}
+    </div>
+  );
+}
+
+// What goes out: everything about the request except its address.
+export function RequestEditor({
+  request,
+  onChange,
+  grpcSource,
+  onDescribe,
+}: {
+  request: Req;
+  onChange: (request: Req) => void;
+  grpcSource: GrpcSource['kind'];
+  onDescribe: (method: string) => Promise<GrpcMethodInfo>;
+}) {
   const [tab, setTab] = useState<TabId>('params');
+  const [example, setExample] = useState<{ busy?: boolean; info?: GrpcMethodInfo; error?: string }>({});
+  const insertExample = async () => {
+    setExample({ busy: true });
+    try {
+      const info = await onDescribe(request.method);
+      setExample({ info });
+      onChange({ ...request, body: { ...request.body, raw: info.template } });
+    } catch (e) {
+      setExample({ error: e instanceof Error ? e.message : String(e) });
+    }
+  };
   const kind = kindOf(request);
   const params = parseQuery(request.url);
   const count = (n: number) => n > 0 && <Count n={n} />;
@@ -45,81 +164,7 @@ export function RequestEditor({ request, sending, dirty, onChange, onSend, onSav
   const current = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
-    <div className="flex flex-col min-h-0 h-full">
-      <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
-        <div className="flex h-8 min-w-0 flex-1 items-stretch rounded-md border border-line bg-raised p-px transition-[border-color,box-shadow] duration-100 hover:border-line-strong focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/25">
-          <Select
-            bare
-            className="shrink-0"
-            selectClassName={KIND_COLOR[kind] || 'text-muted'}
-            value={kind}
-            onChange={(e) => onChange(setKind(request, e.target.value as Kind))}
-            title="Protocol"
-            aria-label="Protocol"
-          >
-            <option value="http">HTTP</option>
-            <option value="graphql">GraphQL</option>
-            <option value="grpc">gRPC</option>
-          </Select>
-          {kind !== 'grpc' && (
-            <>
-              <Select
-                bare
-                className="shrink-0"
-                selectClassName={`font-medium ${methodColor(request.method)}`}
-                value={request.method}
-                onChange={(e) => onChange({ ...request, method: e.target.value })}
-                title="Method"
-                aria-label="Method"
-              >
-                {(METHODS.includes(request.method) ? METHODS : [...METHODS, request.method]).map((m) => (
-                  <option key={m}>{m}</option>
-                ))}
-              </Select>
-            </>
-          )}
-          <input
-            autoFocus
-            className="min-w-0 flex-1 bg-transparent px-2.5 font-mono text-[12.5px] outline-none placeholder:font-sans placeholder:text-[13px] placeholder:text-faint"
-            aria-label={kind === 'grpc' ? 'Server address' : 'URL'}
-            spellCheck={false}
-            placeholder={
-              kind === 'grpc'
-                ? 'grpc://localhost:50051 (grpcs:// for TLS)'
-                : kind === 'graphql'
-                  ? 'https://api.example.com/graphql'
-                  : 'https://api.example.com/users or {{baseUrl}}/users'
-            }
-            value={request.url}
-            onChange={(e) => onChange({ ...request, url: e.target.value })}
-            onKeyDown={(e) => e.key === 'Enter' && onSend()}
-          />
-        </div>
-        <button className={`${primaryBtnCls} h-8 w-[76px]`} disabled={sending} onClick={onSend} title={`Send (${keyLabel(KEYS.send)})`}>
-          {sending ? <Spinner size={13} /> : 'Send'}
-        </button>
-        <button className={`${btnCls} h-8 w-[66px]`} onClick={onSave} title={`Save${dirty ? ' changes' : ''} (${keyLabel(KEYS.save)})`}>
-          Save
-          {dirty && <span className="size-1.5 rounded-full bg-muted" />}
-        </button>
-        {kind !== 'grpc' && (
-          <button className={`${ghostBtnCls} h-8`} onClick={onCurl} title="Copy as cURL">
-            cURL
-          </button>
-        )}
-      </div>
-
-      {kind === 'grpc' && (
-        <GrpcMethod
-          key={grpcSource}
-          method={request.method}
-          source={grpcSource}
-          onChange={(method) => onChange({ ...request, method })}
-          onSettings={onProtoSettings}
-          onLoad={onLoadMethods}
-        />
-      )}
-
+    <section aria-label="Request" className="@container flex h-full min-h-0 flex-col">
       <Tabs active={current} onChange={setTab} tabs={tabs} />
 
       <div className="p-3 overflow-auto flex-1 min-h-0">
@@ -144,7 +189,7 @@ export function RequestEditor({ request, sending, dirty, onChange, onSend, onSav
         {current === 'auth' && <AuthEditor auth={request.auth} grpc={kind === 'grpc'} onChange={(auth) => onChange({ ...request, auth })} />}
         {current === 'body' && kind === 'http' && <BodyEditor body={request.body} onChange={setBody} />}
         {current === 'body' && kind === 'graphql' && (
-          <div className="flex gap-3 h-full">
+          <div className="flex h-full flex-col gap-3 @2xl:flex-row">
             <label className="flex flex-col gap-1.5 flex-[3] min-w-0">
               <span className="text-xs font-medium">Query</span>
               <textarea
@@ -169,6 +214,22 @@ export function RequestEditor({ request, sending, dirty, onChange, onSend, onSav
         )}
         {current === 'body' && kind === 'grpc' && (
           <div className="flex flex-col gap-2 h-full">
+            <div className="flex min-h-7 items-center gap-2">
+              <button
+                className={`${ghostBtnCls} -ml-2 px-2`}
+                disabled={example.busy || !request.method.trim()}
+                onClick={insertExample}
+                title="Replace the message with an example that has every field of this method's request type"
+              >
+                {example.busy ? <Spinner size={13} /> : 'Insert example message'}
+              </button>
+              {example.info && <span className="min-w-0 truncate font-mono text-xs text-muted">{example.info.input}</span>}
+              {example.error && (
+                <span className="min-w-0 truncate text-xs text-danger" title={example.error}>
+                  {example.error}
+                </span>
+              )}
+            </div>
             <textarea
               className={textareaCls}
               aria-label="Message"
@@ -183,7 +244,7 @@ export function RequestEditor({ request, sending, dirty, onChange, onSend, onSav
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -212,7 +273,8 @@ const GRPC_SOURCE: Record<GrpcSource['kind'], { label: string; title: string; lo
 function GrpcMethod(p: {
   method: string;
   source: GrpcSource['kind'];
-  onChange: (method: string) => void;
+  // known is true when the method is one of the loaded ones.
+  onChange: (method: string, known: boolean) => void;
   onSettings: () => void;
   onLoad: () => Promise<string[]>;
 }) {
@@ -225,13 +287,27 @@ function GrpcMethod(p: {
       const found = await p.onLoad();
       setMethods(found);
       setStatus({ text: `${found.length} ${found.length === 1 ? 'method' : 'methods'}`, kind: 'ok' });
-      if (!p.method && found.length) p.onChange(found[0]);
+      if (!p.method && found.length) p.onChange(found[0], true);
     } catch (e) {
       setStatus({ text: e instanceof Error ? e.message : String(e), kind: 'error' });
     }
   };
+  // Proto files are local, so their methods can be offered as soon as the
+  // request opens. Reflection needs the server and stays behind the button.
+  useEffect(() => {
+    if (p.source !== 'proto') return;
+    p.onLoad().then(
+      (found) => {
+        setMethods(found);
+        setStatus({ text: `${found.length} ${found.length === 1 ? 'method' : 'methods'}`, kind: 'ok' });
+      },
+      (e) => setStatus({ text: e instanceof Error ? e.message : String(e), kind: 'error' }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <div className="flex items-center gap-2 px-3 pb-2">
+    <div className="flex items-center gap-2 px-3 pb-2.5">
       <input
         className={`${inputCls} h-8 flex-1 font-mono text-xs placeholder:font-sans placeholder:text-[13px]`}
         aria-label="Method"
@@ -239,7 +315,7 @@ function GrpcMethod(p: {
         placeholder="package.Service/Method"
         list="grpc-methods"
         value={p.method}
-        onChange={(e) => p.onChange(e.target.value)}
+        onChange={(e) => p.onChange(e.target.value, methods.includes(e.target.value))}
       />
       <datalist id="grpc-methods">
         {methods.map((m) => (
@@ -339,12 +415,12 @@ function BodyEditor({ body, onChange }: { body: Body; onChange: (body: Body) => 
 
   return (
     <div className="flex flex-col gap-3 h-full">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Segmented label="Body type" options={modes} value={body.mode} onChange={(mode) => onChange({ ...body, mode })} />
         {body.mode === 'raw' && (
           <>
             <Select
-              className="ml-auto w-40"
+              className="w-40 @xl:ml-auto"
               aria-label="Content type"
               value={body.contentType}
               onChange={(e) => onChange({ ...body, contentType: e.target.value })}

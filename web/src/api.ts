@@ -1,5 +1,5 @@
 import { normalizeProto } from './lib/proto';
-import type { Collection, Environment, HistoryEntry, ProtoCheck, ProtoConfig, Req, Res, Workspace } from './types';
+import type { FsListing, GrpcMethodInfo, Collection, Environment, HistoryEntry, ProtoCheck, ProtoConfig, Req, Res, Workspace } from './types';
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch('/api' + path, {
@@ -21,8 +21,9 @@ export const api = {
   deleteEnvironment: (id: string) => call<void>('DELETE', `/environments/${id}`),
 
   workspace: () => call<Workspace>('GET', '/workspace'),
-  openWorkspace: (path: string) => call<Workspace>('POST', '/workspace/open', { path }),
-  connectRepo: (url: string) => call<Workspace>('POST', '/workspace/connect', { url }),
+  openWorkspace: (path: string, carry: boolean) => call<Workspace>('POST', '/workspace/open', { path, carry }),
+  // Sub-folders of path (the workspace when empty), plus files ending in ext when given.
+  listDir: (path: string, ext = '') => call<FsListing>('GET', `/fs/list?path=${encodeURIComponent(path)}&ext=${encodeURIComponent(ext)}`),
   gitSync: (message: string) => call<Workspace>('POST', '/git/sync', { message }),
   gitPull: () => call<Workspace>('POST', '/git/pull', {}),
 
@@ -37,6 +38,8 @@ export const api = {
     call<Res>('POST', '/send', { request, environmentId, proto: normalizeProto(proto) }),
   grpcMethods: (request: Req, environmentId: string, proto?: ProtoConfig) =>
     call<string[]>('POST', '/grpc/methods', { request, environmentId, proto: normalizeProto(proto) }),
+  grpcDescribe: (request: Req, environmentId: string, proto?: ProtoConfig) =>
+    call<GrpcMethodInfo>('POST', '/grpc/describe', { request, environmentId, proto: normalizeProto(proto) }),
   checkProto: (proto: ProtoConfig, environmentId: string) => call<ProtoCheck>('POST', '/proto/check', { proto, environmentId }),
   parseCurl: (command: string) => call<Req>('POST', '/curl/parse', { command }),
   exportCurl: (request: Req, environmentId: string) =>

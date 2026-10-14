@@ -66,4 +66,12 @@ export type Res = {
 
 export type GitChange = { path: string; status: 'added' | 'modified' | 'deleted' };
 export type GitStatus = { repo: boolean; remote: string; branch: string; upstream: boolean; ahead: number; behind: number; changes: GitChange[] };
-export type Workspace = { path: string; gitAvailable: boolean; git: GitStatus };
+// recent: other workspace folders opened on this machine, newest first.
+export type Workspace = { path: string; gitAvailable: boolean; git: GitStatus; recent: string[] };
+
+// A gRPC method: its message types and an example request message as JSON.
+export type GrpcMethodInfo = { input: string; output: string; streaming: boolean; template: string };
+
+// One directory, as listed for the folder and file browser.
+export type FsEntry = { name: string; dir: boolean };
+export type FsListing = { path: string; parent: string; entries: FsEntry[]; home: string; workspace: string };

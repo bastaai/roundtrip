@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from './api';
-import { CurlModal, EnvModal, ImportModal, ProtoModal, RepoModal, SaveModal, type SaveTarget } from './components/Modals';
+import { CurlModal, EnvModal, ImportModal, ProtoModal, WorkspaceModal, SaveModal, type SaveTarget } from './components/Modals';
 import { Logo } from './components/Logo';
-import { RequestEditor } from './components/RequestEditor';
+import { QuickOpen, type QuickAction } from './components/QuickOpen';
+import { AddressBar, RequestEditor } from './components/RequestEditor';
 import { ResponseView } from './components/ResponseView';
 import { Sidebar } from './components/Sidebar';
-import { ghostBtnCls, Icon, IconButton, Method, ResizeHandle, Select } from './components/ui';
+import { ghostBtnCls, Icon, IconButton, isMod, Kbd, keyLabel, KEYS, Method, ResizeHandle, Select } from './components/ui';
 import { grpcSource, protoOf, sameProto, withProto } from './lib/proto';
-import { emptyRequest, normalizeReq, repoName, uid } from './lib/request';
+import { emptyRequest, normalizeReq, uid } from './lib/request';
+import { folderName } from './lib/shell';
 import { addItem, findItem, mapItem, sortItems } from './lib/tree';
 import type { Collection, Environment, HistoryEntry, Item, Req, Res, Workspace } from './types';
 
@@ -26,7 +28,12 @@ const untouched = (t: Tab) => !t.source && !t.dirty && !t.response && !t.sending
 const errorResponse = (error: string): Res => ({ status: 0, statusText: '', headers: [], body: '', base64: false, size: 0, timeMs: 0, error });
 
 const SIDEBAR_DEFAULT = 280;
+// Share of the pair given to the request: stacked (height) and side by side (width) are remembered separately.
 const SPLIT_DEFAULT = 0.45;
+const COLUMNS_DEFAULT = 0.44;
+// Below this the pair cannot hold two usable columns (a key/value grid next to a readable body), so it stacks.
+const COLUMNS_MIN_WIDTH = 880;
+const COLUMN_MIN = 340;
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 export default function App() {
@@ -36,7 +43,7 @@ export default function App() {
   const [envId, setEnvId] = useState(() => localStorage.getItem('envId') ?? '');
   const [tabs, setTabs] = useState<Tab[]>(() => [blankTab()]);
   const [activeId, setActiveId] = useState(() => tabs[0].id);
-  const [modal, setModal] = useState<null | 'env' | 'import' | 'save' | 'curl' | 'repo'>(null);
+  const [modal, setModal] = useState<null | 'env' | 'import' | 'save' | 'curl' | 'repo' | 'quick'>(null);
   // id of the collection whose proto settings are open
   const [protoFor, setProtoFor] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<Workspace>();
@@ -44,7 +51,13 @@ export default function App() {
   const [error, setError] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('sidebarWidth')) || SIDEBAR_DEFAULT);
   const [split, setSplit] = useState(() => Number(localStorage.getItem('split')) || SPLIT_DEFAULT);
-  const mainRef = useRef<HTMLDivElement>(null);
+  const [columnSplit, setColumnSplit] = useState(() => Number(localStorage.getItem('columnSplit')) || COLUMNS_DEFAULT);
+  const [stacked, setStacked] = useState(() => localStorage.getItem('layout') === 'stacked');
+  const [sidebarHidden, setSidebarHidden] = useState(() => localStorage.getItem('sidebarHidden') === '1');
+  const [pairWidth, setPairWidth] = useState(0);
+  const pairRef = useRef<HTMLDivElement>(null);
+  const roomForColumns = pairWidth >= COLUMNS_MIN_WIDTH;
+  const columns = !stacked && roomForColumns;
 
   const changeCount = workspace ? workspace.git.changes.length + workspace.git.ahead : 0;
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
@@ -74,12 +87,29 @@ export default function App() {
   useEffect(() => localStorage.setItem('envId', envId), [envId]);
   useEffect(() => localStorage.setItem('sidebarWidth', String(sidebarWidth)), [sidebarWidth]);
   useEffect(() => localStorage.setItem('split', String(split)), [split]);
+  useEffect(() => localStorage.setItem('columnSplit', String(columnSplit)), [columnSplit]);
+  useEffect(() => localStorage.setItem('layout', stacked ? 'stacked' : 'columns'), [stacked]);
+  useEffect(() => localStorage.setItem('sidebarHidden', sidebarHidden ? '1' : ''), [sidebarHidden]);
+  // Measured before the first paint, so the pair never flashes in the wrong arrangement.
+  useLayoutEffect(() => {
+    const el = pairRef.current!;
+    setPairWidth(el.clientWidth);
+    const observer = new ResizeObserver(() => setPairWidth(el.clientWidth));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     document.getElementById(`tab-${activeId}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeId, tabs.length]);
 
   const resizeSidebar = (width: number) => setSidebarWidth(clamp(Math.round(width), 200, Math.min(520, window.innerWidth - 480)));
   const resizeSplit = (ratio: number) => setSplit(clamp(ratio, 0.2, 0.8));
+  // Neither column gets narrower than COLUMN_MIN, also after the window shrinks under a remembered split.
+  const fitColumns = (ratio: number) => {
+    const min = Math.min(0.5, Math.max(0.25, COLUMN_MIN / (pairWidth || 1)));
+    return clamp(ratio, min, 1 - min);
+  };
+  const resizeColumns = (ratio: number) => setColumnSplit(fitColumns(ratio));
   const newTab = () => {
     const tab = blankTab();
     setTabs((ts) => [...ts, tab]);
@@ -176,8 +206,16 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isMod(e) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k' && !protoFor && (!modal || modal === 'quick')) {
+        e.preventDefault();
+        setModal(modal ? null : 'quick');
+        return;
+      }
       if (!(e.metaKey || e.ctrlKey) || modal || protoFor) return;
-      if (e.key === 'Enter') {
+      if (isMod(e) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setSidebarHidden((hidden) => !hidden);
+      } else if (e.key === 'Enter') {
         e.preventDefault();
         send(active);
       } else if (e.key === 's') {
@@ -189,36 +227,81 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  const openWorkspace = () => {
+    refreshWorkspace();
+    setModal('repo');
+  };
+
+  const describeMethod = (method: string) => api.grpcDescribe({ ...active.request, method }, envId, protoOf(activeSource));
+
+  // switched is true when the workspace now points at a different folder.
+  const workspaceChanged = (w: Workspace, switched: boolean) => {
+    setWorkspace(w);
+    if (switched) {
+      // Open tabs belong to the previous workspace.
+      const tab = blankTab();
+      setTabs([tab]);
+      setActiveId(tab.id);
+    }
+    reload();
+  };
+
+  const quickActions: QuickAction[] = [
+    { id: 'new', label: 'New request', run: newTab },
+    { id: 'import', label: 'Import cURL', detail: 'Paste a command as a new request', run: () => setModal('import') },
+    { id: 'workspace', label: 'Open workspace', detail: 'Folder, git status, switch workspace', run: openWorkspace },
+    ...(workspace?.recent ?? []).map((path) => ({
+      id: `workspace-${path}`,
+      label: `Switch to workspace ${folderName(path)}`,
+      detail: path,
+      run: () => api.openWorkspace(path, false).then((w) => workspaceChanged(w, true), fail),
+    })),
+    ...[{ id: '', name: 'No environment' }, ...environments]
+      .filter((e) => e.id !== envId)
+      .map((e) => ({ id: `env-${e.id}`, label: e.id ? `Switch to ${e.name}` : 'Switch to no environment', detail: 'Environment', run: () => setEnvId(e.id) })),
+    { id: 'envs', label: 'Edit environments', detail: 'Variables', run: () => setModal('env') },
+    { id: 'sidebar', label: sidebarHidden ? 'Show sidebar' : 'Hide sidebar', keys: KEYS.sidebar, run: () => setSidebarHidden(!sidebarHidden) },
+    ...(roomForColumns
+      ? [{ id: 'layout', label: stacked ? 'Request and response side by side' : 'Response under the request', detail: 'Layout', run: () => setStacked(!stacked) }]
+      : []),
+  ];
+
   return (
     <div className="h-full flex flex-col">
-      <header className="h-11 shrink-0 flex items-center gap-3 pl-3 pr-2 border-b border-line bg-panel">
-        <div className="flex items-center gap-2 select-none">
+      <header className="h-11 shrink-0 flex items-center gap-2 pl-2 pr-2 border-b border-line bg-panel">
+        <IconButton
+          icon="sidebar"
+          title={`${sidebarHidden ? 'Show' : 'Hide'} sidebar (${keyLabel(KEYS.sidebar)})`}
+          active={!sidebarHidden}
+          onClick={() => setSidebarHidden(!sidebarHidden)}
+        />
+        <div className="mr-1 flex items-center gap-2 select-none">
           <Logo />
           <span className="font-semibold tracking-tight">Roundtrip</span>
         </div>
         {workspace && (
           <button
             className={`${ghostBtnCls} min-w-0 shrink text-fg`}
-            title={`${workspace.path}\nOpen repository and sync`}
-            onClick={() => {
-              refreshWorkspace();
-              setModal('repo');
-            }}
+            title={`${workspace.path}\nWorkspace folder and git status`}
+            onClick={openWorkspace}
           >
             <span className="text-muted">
-              <Icon name="branch" />
+              <Icon name={workspace.git.repo ? 'branch' : 'folder'} />
             </span>
-            {workspace.git.repo ? (
-              <>
-                <span className="truncate">{workspace.git.remote ? repoName(workspace.git.remote) : 'Local repository'}</span>
-                <span className="shrink-0 text-xs tabular-nums text-muted">{changeCount > 0 ? `${changeCount} to sync` : 'Synced'}</span>
-              </>
-            ) : (
-              'Connect GitHub'
+            <span className="truncate">{folderName(workspace.path)}</span>
+            {workspace.git.repo && (
+              <span className="shrink-0 text-xs tabular-nums text-muted">
+                {changeCount > 0 ? `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}` : (workspace.git.branch || 'clean')}
+              </span>
             )}
           </button>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <button className={`${ghostBtnCls} gap-2`} onClick={() => setModal('quick')} title={`Go to a request or run an action (${keyLabel(KEYS.quickOpen)})`}>
+            <Icon name="search" size={13} />
+            Go to
+            <Kbd keys={KEYS.quickOpen} />
+          </button>
           <button className={ghostBtnCls} onClick={() => setModal('import')} title="Import a cURL command as a new request">
             Import cURL
           </button>
@@ -246,6 +329,7 @@ export default function App() {
       <div className="flex-1 flex min-h-0">
         <Sidebar
           width={sidebarWidth}
+          hidden={sidebarHidden}
           collections={collections}
           history={history}
           activeItemId={active.source?.itemId}
@@ -260,13 +344,15 @@ export default function App() {
           }}
           onReload={reload}
         />
-        <ResizeHandle
-          axis="x"
-          label="Sidebar width"
-          onMove={resizeSidebar}
-          onNudge={(d) => resizeSidebar(sidebarWidth + d)}
-          onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
-        />
+        {!sidebarHidden && (
+          <ResizeHandle
+            axis="x"
+            label="Sidebar width"
+            onMove={resizeSidebar}
+            onNudge={(d) => resizeSidebar(sidebarWidth + d)}
+            onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+          />
+        )}
 
         <main className="flex-1 flex flex-col min-w-0">
           <div role="tablist" aria-label="Open requests" className="flex h-9 shrink-0 items-stretch bg-panel overflow-x-auto [scrollbar-width:none]"
@@ -311,33 +397,71 @@ export default function App() {
             <div className="flex-1 border-b border-line" />
           </div>
 
-          <div ref={mainRef} className="flex-1 flex flex-col min-h-0">
-            <div className="shrink-0 min-h-0" style={{ height: `${split * 100}%` }}>
+          <AddressBar
+            key={active.id}
+            request={active.request}
+            sending={active.sending}
+            dirty={active.dirty}
+            onChange={(request) => patchTab(active.id, { request, dirty: true })}
+            onSend={() => send(active)}
+            onSave={() => save(active)}
+            onCurl={() => setModal('curl')}
+            grpcSource={activeSource.kind}
+            onProtoSettings={() => setProtoFor(active.source?.collectionId ?? null)}
+            onLoadMethods={() => api.grpcMethods(active.request, envId, protoOf(activeSource))}
+            onDescribe={describeMethod}
+            trailing={
+              <IconButton
+                icon={columns ? 'rows' : 'columns'}
+                disabled={!roomForColumns}
+                title={
+                  !roomForColumns
+                    ? 'Not enough room to put the response beside the request'
+                    : columns
+                      ? 'Put the response under the request'
+                      : 'Put the response beside the request'
+                }
+                onClick={() => setStacked(!stacked)}
+              />
+            }
+          />
+
+          <div ref={pairRef} className={`flex min-h-0 flex-1 ${columns ? '' : 'flex-col'}`}>
+            <div className="min-h-0 min-w-0 shrink-0" style={columns ? { width: `${fitColumns(columnSplit) * 100}%` } : { height: `${split * 100}%` }}>
               <RequestEditor
                 key={active.id}
                 request={active.request}
-                sending={active.sending}
-                dirty={active.dirty}
                 onChange={(request) => patchTab(active.id, { request, dirty: true })}
-                onSend={() => send(active)}
-                onSave={() => save(active)}
-                onCurl={() => setModal('curl')}
                 grpcSource={activeSource.kind}
-                onProtoSettings={() => setProtoFor(active.source?.collectionId ?? null)}
-                onLoadMethods={() => api.grpcMethods(active.request, envId, protoOf(activeSource))}
+                onDescribe={describeMethod}
               />
             </div>
-            <ResizeHandle
-              axis="y"
-              label="Request and response split"
-              onMove={(y) => {
-                const rect = mainRef.current?.getBoundingClientRect();
-                if (rect) resizeSplit((y - rect.top) / rect.height);
-              }}
-              onNudge={(d) => resizeSplit(split + d / (mainRef.current?.clientHeight || 600))}
-              onReset={() => setSplit(SPLIT_DEFAULT)}
-            />
-            <div className="flex-1 min-h-0">
+            {columns ? (
+              <ResizeHandle
+                key="columns"
+                axis="x"
+                label="Request and response split"
+                onMove={(x) => {
+                  const rect = pairRef.current?.getBoundingClientRect();
+                  if (rect) resizeColumns((x - rect.left) / rect.width);
+                }}
+                onNudge={(d) => resizeColumns(fitColumns(columnSplit) + d / (pairWidth || 1000))}
+                onReset={() => setColumnSplit(COLUMNS_DEFAULT)}
+              />
+            ) : (
+              <ResizeHandle
+                key="stacked"
+                axis="y"
+                label="Request and response split"
+                onMove={(y) => {
+                  const rect = pairRef.current?.getBoundingClientRect();
+                  if (rect) resizeSplit((y - rect.top) / rect.height);
+                }}
+                onNudge={(d) => resizeSplit(split + d / (pairRef.current?.clientHeight || 600))}
+                onReset={() => setSplit(SPLIT_DEFAULT)}
+              />
+            )}
+            <div className="min-h-0 min-w-0 flex-1">
               <ResponseView key={active.id} res={active.response} sending={active.sending} />
             </div>
           </div>
@@ -357,20 +481,13 @@ export default function App() {
         </div>
       )}
 
+      {modal === 'quick' && <QuickOpen collections={collections} actions={quickActions} onOpen={openItem} onClose={() => setModal(null)} />}
       {modal === 'repo' && workspace && (
-        <RepoModal
+        <WorkspaceModal
           workspace={workspace}
+          hasCollections={collections.length > 0}
           onClose={() => setModal(null)}
-          onChanged={(w, switched) => {
-            setWorkspace(w);
-            if (switched) {
-              // Open tabs belong to the previous workspace.
-              const tab = blankTab();
-              setTabs([tab]);
-              setActiveId(tab.id);
-            }
-            reload();
-          }}
+          onChanged={workspaceChanged}
         />
       )}
       {modal === 'env' && (
@@ -396,6 +513,7 @@ export default function App() {
       {protoCollection && (
         <ProtoModal
           collection={protoCollection}
+          workspace={workspace?.path ?? ''}
           environmentId={envId}
           environmentName={environments.find((e) => e.id === envId)?.name ?? ''}
           onClose={() => setProtoFor(null)}

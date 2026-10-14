@@ -7,7 +7,11 @@ export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(
 export const KEYS = {
   send: isMac ? ['⌘', '↵'] : ['Ctrl', 'Enter'],
   save: isMac ? ['⌘', 'S'] : ['Ctrl', 'S'],
+  quickOpen: isMac ? ['⌘', 'K'] : ['Ctrl', 'K'],
+  sidebar: isMac ? ['⌘', 'B'] : ['Ctrl', 'B'],
 };
+// The platform's own modifier only: on macOS Ctrl+K and Ctrl+B are text-editing keys.
+export const isMod = (e: { metaKey: boolean; ctrlKey: boolean }) => (isMac ? e.metaKey : e.ctrlKey);
 export const keyLabel = (keys: string[]) => keys.join(isMac ? '' : '+');
 
 const focusField =
@@ -67,6 +71,10 @@ const ICONS = {
   branch: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
   alert: 'M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01',
   clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
+  sidebar: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18',
+  columns: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM12 3v18',
+  rows: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM3 12h18',
   sliders: 'M4 7h9M19 7h1M13 7a3 3 0 1 0 6 0a3 3 0 1 0-6 0M4 17h1M11 17h9M5 17a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
 };
 export type IconName = keyof typeof ICONS;

@@ -1,6 +1,10 @@
 import type { Collection, ProtoCheck, ProtoConfig } from '../types';
 
 // Trims, drops blank rows and repeats; order is kept because roots are searched in order.
+// True when a gRPC message editor holds nothing worth keeping, so an example
+// message can replace it without asking.
+export const isBlankMessage = (raw: string) => raw.replace(/\s+/g, '') === '' || raw.replace(/\s+/g, '') === '{}';
+
 export function cleanPaths(paths?: string[] | null): string[] {
   const seen = new Set<string>();
   return (paths ?? []).map((p) => p.trim()).filter((p) => p && !seen.has(p) && seen.add(p));

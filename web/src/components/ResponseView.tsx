@@ -6,6 +6,13 @@ import { Count, ghostBtnCls, Icon, Kbd, KEYS, Segmented, Spinner, statusColor, T
 const HIGHLIGHT_LIMIT = 500_000;
 const preCls = 'p-3 font-mono text-xs leading-[1.6] whitespace-pre-wrap break-all';
 
+const SHORTCUTS: [string[], string][] = [
+  [KEYS.send, 'Send'],
+  [KEYS.save, 'Save'],
+  [KEYS.quickOpen, 'Go to a request'],
+  [KEYS.sidebar, 'Hide or show the sidebar'],
+];
+
 const formatTime = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`);
 
 export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) {
@@ -22,28 +29,35 @@ export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) 
 
   if (!res) {
     return (
-      <Placeholder>
-        {sending ? (
-          <>
-            <Progress />
-            <span className="flex items-center gap-2 text-muted">
-              <Spinner /> Sending request…
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="text-muted">Enter a URL and send the request to see the response here.</span>
-            <span className="flex items-center gap-4 text-muted">
-              <span className="flex items-center gap-1.5">
-                <Kbd keys={KEYS.send} /> Send
-              </span>
-              <span className="flex items-center gap-1.5">
-                <Kbd keys={KEYS.save} /> Save
-              </span>
-            </span>
-          </>
+      <Column>
+        {sending && <Progress />}
+        <Heading>
+          <span className="flex items-center gap-2 text-muted">
+            {sending ? (
+              <>
+                <Spinner /> Sending request…
+              </>
+            ) : (
+              'No response yet'
+            )}
+          </span>
+        </Heading>
+        {!sending && (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-auto px-6 pb-10 text-center">
+            <span className="max-w-xs text-muted">Send the request and the response comes back here.</span>
+            <dl className="grid grid-cols-[auto_auto] items-center gap-x-3 gap-y-1.5 text-left text-muted">
+              {SHORTCUTS.map(([keys, label]) => (
+                <div key={label} className="contents">
+                  <dt className="justify-self-end">
+                    <Kbd keys={keys} />
+                  </dt>
+                  <dd>{label}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         )}
-      </Placeholder>
+      </Column>
     );
   }
 
@@ -56,23 +70,36 @@ export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) 
 
   if (res.error) {
     return (
-      <div className="relative h-full overflow-auto">
+      <Column>
         {sending && <Progress />}
-        <div className={`flex max-w-3xl flex-col gap-2.5 p-3 ${busy}`}>
-          <div className="font-medium text-danger">Could not send request</div>
+        <Heading>
+          <span className={`${resultCls} text-danger`}>Could not send request</span>
+        </Heading>
+        <div className={`flex min-h-0 max-w-3xl flex-1 flex-col gap-2.5 overflow-auto px-3 pb-3 pt-1.5 ${busy}`}>
           <pre className="rounded-md bg-panel p-3 font-mono text-xs leading-[1.6] whitespace-pre-wrap break-words">{res.error}</pre>
           <p className="text-muted">
             Check the URL and that the server is reachable. If the request uses <code className="font-mono text-xs">{'{{variables}}'}</code>, make sure the
             right environment is selected.
           </p>
         </div>
-      </div>
+      </Column>
     );
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <Column>
       {sending && <Progress />}
+      <Heading>
+        <span className={`${resultCls} min-w-0 truncate ${statusColor(res.status, res.grpc)}`}>
+          {res.grpc ? `${res.statusText} (${res.status})` : `${res.status} ${res.statusText}`}
+        </span>
+        <span className="shrink-0 text-muted" title="Time">
+          {formatTime(res.timeMs)}
+        </span>
+        <span className="shrink-0 text-muted" title="Size">
+          {formatSize(res.size)}
+        </span>
+      </Heading>
       <Tabs
         active={view}
         onChange={setTab}
@@ -96,38 +123,26 @@ export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) 
             : []),
         ]}
         right={
-          <>
-            <span className="flex min-w-0 items-center gap-3 pr-1 text-xs tabular-nums">
-              <span className={`truncate font-medium ${statusColor(res.status, res.grpc)}`}>
-                {res.grpc ? `${res.statusText} (${res.status})` : `${res.status} ${res.statusText}`}
-              </span>
-              <span className="shrink-0 text-muted" title="Time">
-                {formatTime(res.timeMs)}
-              </span>
-              <span className="shrink-0 text-muted" title="Size">
-                {formatSize(res.size)}
-              </span>
-            </span>
-            {view === 'body' && !res.base64 && (
-              <>
-                {formatted !== null && (
-                  <Segmented
-                    label="Body format"
-                    value={pretty ? 'pretty' : 'raw'}
-                    onChange={(v) => setPretty(v === 'pretty')}
-                    options={[
-                      { id: 'pretty', label: 'Pretty' },
-                      { id: 'raw', label: 'Raw' },
-                    ]}
-                  />
-                )}
-                <button className={`${ghostBtnCls} w-[72px]`} onClick={() => copy(text)} title="Copy the response body">
-                  <Icon name={copied ? 'check' : 'copy'} size={13} />
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-              </>
-            )}
-          </>
+          view === 'body' &&
+          !res.base64 && (
+            <>
+              {formatted !== null && (
+                <Segmented
+                  label="Body format"
+                  value={pretty ? 'pretty' : 'raw'}
+                  onChange={(v) => setPretty(v === 'pretty')}
+                  options={[
+                    { id: 'pretty', label: 'Pretty' },
+                    { id: 'raw', label: 'Raw' },
+                  ]}
+                />
+              )}
+              <button className={`${ghostBtnCls} w-[72px]`} onClick={() => copy(text)} title="Copy the response body">
+                <Icon name={copied ? 'check' : 'copy'} size={13} />
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </>
+          )
         }
       />
       <div className={`min-h-0 flex-1 overflow-auto ${busy}`}>
@@ -176,7 +191,7 @@ export function ResponseView({ res, sending }: { res?: Res; sending: boolean }) 
           <pre className={preCls}>{text}</pre>
         )}
       </div>
-    </div>
+    </Column>
   );
 }
 
@@ -188,6 +203,21 @@ function Progress() {
   );
 }
 
-function Placeholder({ children }: { children: React.ReactNode }) {
-  return <div className="relative flex h-full flex-col items-center justify-center gap-3 px-6 text-center">{children}</div>;
+// What came back. The result leads the column; everything else sits under it.
+function Column({ children }: { children: React.ReactNode }) {
+  return (
+    <section aria-label="Response" className="relative flex h-full min-h-0 flex-col">
+      {children}
+    </section>
+  );
+}
+
+const resultCls = 'text-[15px] font-semibold tracking-tight';
+
+function Heading({ children }: { children: React.ReactNode }) {
+  return (
+    <div role="status" className="flex h-9 shrink-0 items-baseline gap-3 px-3 leading-9 tabular-nums">
+      {children}
+    </div>
+  );
 }

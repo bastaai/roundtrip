@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { emptyRequest, uid } from '../lib/request';
-import { addItem, isFolder, mapItem, removeItem } from '../lib/tree';
+import { addItem, filterCollections, isFolder, mapItem, removeItem } from '../lib/tree';
 import type { Collection, HistoryEntry, Item } from '../types';
 import { btnCls, ghostBtnCls, Icon, IconButton, Method, statusColor, Tabs } from './ui';
 
 type Props = {
   width: number;
+  hidden: boolean;
   collections: Collection[];
   history: HistoryEntry[];
   activeItemId?: string;
@@ -22,6 +23,12 @@ export function Sidebar(p: Props) {
   const [view, setView] = useState<'collections' | 'history'>('collections');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+  const treeRef = useRef<HTMLDivElement>(null);
+  const filtering = filter.trim() !== '';
+  // Only what is drawn is narrowed; every change is made to the full collection.
+  const shown = filterCollections(p.collections, filter);
+  const isOpen = (id: string) => filtering || !collapsed.has(id);
 
   const setOpen = (id: string, open: boolean) =>
     setCollapsed((prev) => {
@@ -34,6 +41,7 @@ export function Sidebar(p: Props) {
   const newCollection = () => {
     const c: Collection = { id: uid(), name: 'New Collection', items: [] };
     p.onChange(c);
+    setFilter('');
     setRenaming(c.id);
   };
 
@@ -44,6 +52,7 @@ export function Sidebar(p: Props) {
     const next = { ...c, items: addItem(c.items, parentId, item) };
     p.onChange(next);
     setOpen(parentId ?? c.id, true);
+    setFilter('');
     setRenaming(item.id);
     if (!folder) p.onOpen(next, item);
   };
@@ -76,7 +85,7 @@ export function Sidebar(p: Props) {
           />
         );
       }
-      const open = !collapsed.has(item.id);
+      const open = isOpen(item.id);
       const children = item.items ?? [];
       return (
         <div key={item.id}>
@@ -105,7 +114,7 @@ export function Sidebar(p: Props) {
     });
 
   return (
-    <aside className="shrink-0 bg-panel flex flex-col min-h-0" style={{ width: p.width }}>
+    <aside className={`shrink-0 bg-panel flex-col min-h-0 ${p.hidden ? 'hidden' : 'flex'}`} style={{ width: p.width }}>
       <Tabs
         active={view}
         onChange={setView}
@@ -129,7 +138,34 @@ export function Sidebar(p: Props) {
         }
       />
       {view === 'collections' ? (
-        <div className="flex-1 overflow-auto p-1.5" data-tree>
+        <>
+        {p.collections.length > 0 && (
+          <label className="mx-1.5 mt-1.5 flex h-7 shrink-0 items-center gap-1.5 rounded-md pl-2 pr-0.5 text-faint transition-colors duration-100 hover:bg-hover focus-within:bg-hover focus-within:shadow-focus">
+            <Icon name="search" size={12} />
+            <input
+              className="h-full min-w-0 flex-1 bg-transparent text-fg outline-none placeholder:text-faint"
+              aria-label="Filter collections"
+              spellCheck={false}
+              placeholder="Filter"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && filter) {
+                  e.preventDefault();
+                  setFilter('');
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  treeRef.current?.querySelector<HTMLElement>('[data-row]')?.focus();
+                }
+              }}
+            />
+            {filter && <IconButton icon="x" title="Clear filter (Esc)" onClick={() => setFilter('')} />}
+          </label>
+        )}
+        <div ref={treeRef} className="flex-1 overflow-auto p-1.5" data-tree>
+          {filtering && shown.length === 0 && (
+            <p className="break-words px-1.5 py-2.5 text-muted">Nothing matches “{filter.trim()}”.</p>
+          )}
           {p.collections.length === 0 && (
             <div className="flex flex-col items-start gap-3 px-1.5 py-2.5">
               <p className="text-muted">No collections yet. A collection is a folder of saved requests in your workspace.</p>
@@ -138,8 +174,9 @@ export function Sidebar(p: Props) {
               </button>
             </div>
           )}
-          {p.collections.map((c) => {
-            const open = !collapsed.has(c.id);
+          {shown.map((visible) => {
+            const c = p.collections.find((x) => x.id === visible.id) ?? visible;
+            const open = isOpen(c.id);
             return (
               <div key={c.id}>
                 <Row
@@ -168,11 +205,12 @@ export function Sidebar(p: Props) {
                     </>
                   }
                 />
-                {open && (c.items.length ? renderItems(c, c.items, 1) : <EmptyRow depth={1}>No requests yet</EmptyRow>)}
+                {open && (visible.items.length ? renderItems(c, visible.items, 1) : <EmptyRow depth={1}>No requests yet</EmptyRow>)}
               </div>
             );
           })}
         </div>
+        </>
       ) : (
         <div className="flex-1 overflow-auto p-1.5">
           {p.history.length === 0 ? (

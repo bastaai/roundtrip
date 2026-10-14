@@ -42,3 +42,31 @@ export function listFolders(items: Item[], prefix = ''): { id: string; label: st
     return [{ id: folder.id, label }, ...listFolders(folder.items ?? [], label + ' / ')];
   });
 }
+
+const SEP = ' / ';
+const terms = (query: string) => query.toLowerCase().split(/\s+/).filter(Boolean);
+const pathMatches = (path: string, words: string[]) => words.every((w) => path.includes(w));
+
+function filterItems(items: Item[], words: string[], prefix: string): Item[] {
+  return items.flatMap((item) => {
+    const path = prefix + SEP + item.name.toLowerCase();
+    if (!isFolder(item)) return pathMatches(path, words) ? [item] : [];
+    const kept = filterItems(item.items ?? [], words, path);
+    return kept.length || pathMatches(path, words) ? [{ ...item, items: kept }] : [];
+  });
+}
+
+// Narrows the tree to what matches the filter. Every word must appear somewhere in
+// "collection / folder / request", in any order and any case, so a matching folder or
+// collection keeps everything inside it. A blank filter returns the input untouched.
+export function filterCollections<C extends { name: string; items: Item[] }>(collections: C[], query: string): C[] {
+  const words = terms(query);
+  if (!words.length) return collections;
+  return collections.flatMap((c) => {
+    const path = c.name.toLowerCase();
+    const items = filterItems(c.items, words, path);
+    return items.length || pathMatches(path, words) ? [{ ...c, items }] : [];
+  });
+}
+
+export const countRequests = (items: Item[]): number => items.reduce((n, item) => n + (isFolder(item) ? countRequests(item.items ?? []) : 1), 0);

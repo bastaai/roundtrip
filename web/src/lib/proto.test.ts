@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Collection } from '../types';
-import { checkSummary, cleanPaths, grpcSource, groupMethods, normalizeProto, protoOf, sameProto, withProto } from './proto';
+import { checkSummary, cleanPaths, groupMethods, grpcSource, isBlankMessage, normalizeProto, protoOf, sameProto, withProto } from './proto';
 
 const col = (id: string, proto?: Collection['proto']): Collection => ({ id, name: id, items: [], ...(proto ? { proto } : {}) });
 
@@ -69,4 +69,13 @@ describe('proto check result', () => {
     ]);
     expect(groupMethods({})).toEqual([]);
   });
+});
+
+
+it('isBlankMessage', () => {
+  expect(isBlankMessage('')).toBe(true);
+  expect(isBlankMessage('  {\n}\n')).toBe(true);
+  expect(isBlankMessage('{ }')).toBe(true);
+  expect(isBlankMessage('{"a": 1}')).toBe(false);
+  expect(isBlankMessage('[]')).toBe(false);
 });

@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { checkSummary, groupMethods, normalizeProto } from '../lib/proto';
 import { repoName, uid } from '../lib/request';
+import { portablePath, protoFilePath } from '../lib/paths';
+import { folderName } from '../lib/shell';
 import { listFolders } from '../lib/tree';
 import type { Collection, Environment, ProtoCheck, ProtoConfig, Req, Workspace } from '../types';
 import { KVEditor, ListEditor } from './KVEditor';
+import { PathBrowser } from './PathBrowser';
 import { btnCls, fieldCls, ghostBtnCls, Icon, IconButton, inputCls, isMac, Kbd, KEYS, Modal, primaryBtnCls, Select, Spinner, useCopied } from './ui';
 
 const labelCls = 'text-xs font-medium text-muted';
@@ -271,6 +274,8 @@ export function SaveModal(p: { collections: Collection[]; defaultName: string; o
 // Edits a local copy; nothing is saved until Save.
 export function ProtoModal(p: {
   collection: Collection;
+  // Absolute path of the workspace folder; picked paths inside it are saved relative to it.
+  workspace: string;
   environmentId: string;
   environmentName: string;
   onClose: () => void;
@@ -279,14 +284,29 @@ export function ProtoModal(p: {
   const [roots, setRoots] = useState(p.collection.proto?.roots ?? []);
   const [files, setFiles] = useState(p.collection.proto?.files ?? []);
   const [busy, setBusy] = useState(false);
+  const [browsing, setBrowsing] = useState<'roots' | 'files'>();
   const [checked, setChecked] = useState<{ key: string; result?: ProtoCheck; error?: string }>();
+  // Appends picked paths, skipping ones already listed.
+  const add = (rows: string[], picked: string[]) => [...rows, ...picked.filter((path) => !rows.includes(path))];
+  // Where the file browser opens: the first root it can resolve, else the workspace.
+  const firstRoot = roots.find((root) => !root.includes('{{') && !root.startsWith('~'));
+  const filesStart = !firstRoot ? '' : /^([\\/]|[A-Za-z]:)/.test(firstRoot) ? firstRoot : `${p.workspace}/${firstRoot}`;
+  const browseBtn = (target: 'roots' | 'files', label: string) => (
+    <button className={`${ghostBtnCls} -ml-2 self-start px-2`} onClick={() => setBrowsing(browsing === target ? undefined : target)}>
+      <Icon name="folder" size={13} /> {label}
+    </button>
+  );
   const proto = normalizeProto({ roots, files });
   // A result only describes the values it was run with.
   const key = JSON.stringify(proto) ?? '';
   const shown = checked?.key === key ? checked : undefined;
   const code = (text: string) => <code className="font-mono text-fg">{text}</code>;
   const resultRef = useRef<HTMLDivElement>(null);
-  useEffect(() => resultRef.current?.scrollIntoView({ block: 'nearest' }), [checked]);
+  // Block body on purpose: newer browsers return a promise from
+  // scrollIntoView, and React would take a returned value for a cleanup function.
+  useEffect(() => {
+    resultRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [checked]);
 
   const check = async () => {
     if (!proto || busy) return;
@@ -328,6 +348,18 @@ export function ProtoModal(p: {
         </p>
         <div className="flex flex-col gap-1.5">
           <ListEditor autoFocus label="Import roots" placeholder="Add a folder, e.g. protos" rows={roots} onChange={setRoots} />
+          {browsing === 'roots' ? (
+            <PathBrowser
+              mode="folder"
+              onCancel={() => setBrowsing(undefined)}
+              onPick={(picked) => {
+                setRoots(add(roots, picked.map((path) => portablePath(path, p.workspace))));
+                setBrowsing(undefined);
+              }}
+            />
+          ) : (
+            browseBtn('roots', 'Browse for a folder…')
+          )}
           <p className="text-xs leading-relaxed text-muted">
             Folders that imports are resolved from, like {code('-I')} for protoc. Relative paths are relative to the workspace folder; absolute paths and{' '}
             {code('~')} work too.
@@ -335,6 +367,20 @@ export function ProtoModal(p: {
         </div>
         <div className="flex flex-col gap-1.5">
           <ListEditor label="Files" placeholder="Add a file, e.g. api/v1/users.proto" rows={files} onChange={setFiles} />
+          {browsing === 'files' ? (
+            <PathBrowser
+              mode="files"
+              ext=".proto"
+              start={filesStart}
+              onCancel={() => setBrowsing(undefined)}
+              onPick={(picked) => {
+                setFiles(add(files, picked.map((path) => protoFilePath(path, roots, p.workspace))));
+                setBrowsing(undefined);
+              }}
+            />
+          ) : (
+            browseBtn('files', 'Browse for .proto files…')
+          )}
           <p className="text-xs leading-relaxed text-muted">
             Proto files to load, relative to a root. Leave this empty to load every .proto file under the roots.
           </p>
@@ -383,10 +429,16 @@ export function ProtoModal(p: {
 const CHANGE_STYLE = { added: ['A', 'text-ok'], modified: ['M', 'text-warn'], deleted: ['D', 'text-danger'] } as const;
 
 // switched is true when the workspace now points at a different folder.
-export function RepoModal(p: { workspace: Workspace; onClose: () => void; onChanged: (workspace: Workspace, switched: boolean) => void }) {
+export function WorkspaceModal(p: {
+  workspace: Workspace;
+  hasCollections: boolean;
+  onClose: () => void;
+  onChanged: (workspace: Workspace, switched: boolean) => void;
+}) {
   const { git } = p.workspace;
-  const [url, setUrl] = useState('');
   const [path, setPath] = useState('');
+  const [carry, setCarry] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -398,8 +450,8 @@ export function RepoModal(p: { workspace: Workspace; onClose: () => void; onChan
     try {
       p.onChanged(await action(), switched);
       setMessage('');
-      setUrl('');
       setPath('');
+      setCarry(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -408,33 +460,29 @@ export function RepoModal(p: { workspace: Workspace; onClose: () => void; onChan
 
   const canSync = !busy && !(git.changes.length === 0 && (!git.remote || (git.upstream && git.ahead === 0)));
   const sync = () => canSync && run('sync', () => api.gitSync(message));
-  const canConnect = !busy && !!url.trim() && p.workspace.gitAvailable;
-  const connect = () => canConnect && run('connect', () => api.connectRepo(url), true);
   const canOpen = !busy && !!path.trim();
-  const open = () => canOpen && run('open', () => api.openWorkspace(path.trim()), true);
+  const open = () => canOpen && run('open', () => api.openWorkspace(path.trim(), carry), true);
 
   return (
-    <Modal title="Repository" onClose={p.onClose} width="max-w-[640px]">
+    <Modal title="Workspace" onClose={p.onClose} width="max-w-[640px]">
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-1.5">
-          <div className={labelCls}>Workspace folder</div>
+          <div className={labelCls}>Folder</div>
           <div className="flex items-start gap-1 rounded-md bg-panel py-1 pl-2.5 pr-1">
             <span className="min-w-0 flex-1 py-1 font-mono text-xs break-all">{p.workspace.path}</span>
             <IconButton icon={copied ? 'check' : 'copy'} title={copied ? 'Copied' : 'Copy path'} onClick={() => copy(p.workspace.path)} />
           </div>
+          <p className="text-xs leading-relaxed text-muted">
+            Every request is saved as a readable YAML file under <code className="font-mono">collections/</code> in this folder, ready to be
+            committed with the rest of your code.
+          </p>
         </div>
 
-        {!p.workspace.gitAvailable && (
-          <p className="rounded-md bg-warn/10 px-3 py-2 text-warn">
-            git was not found on this machine. Install git to sync with GitHub.
-          </p>
-        )}
-
-        {git.repo && (
+        {git.repo ? (
           <div className="flex flex-col gap-2">
             <div className="flex min-h-7 items-center justify-between gap-3">
               <div className="flex min-w-0 items-baseline gap-2">
-                <span className="truncate font-medium">{git.remote ? repoName(git.remote) : 'Local repository'}</span>
+                <span className="truncate font-medium">{git.remote ? repoName(git.remote) : 'Git repository'}</span>
                 <span className="shrink-0 font-mono text-xs text-muted">{git.branch || 'no branch'}</span>
                 {git.ahead > 0 && <span className="shrink-0 text-xs tabular-nums text-muted">{git.ahead} to push</span>}
                 {git.behind > 0 && <span className="shrink-0 text-xs tabular-nums text-muted">{git.behind} to pull</span>}
@@ -478,36 +526,52 @@ export function RepoModal(p: { workspace: Workspace; onClose: () => void; onChan
                 {busy === 'sync' ? <Spinner size={13} /> : git.remote ? (git.changes.length ? 'Commit & push' : 'Push') : 'Commit'}
               </button>
             </div>
-            {!git.remote && <p className="text-xs text-muted">No remote named origin: commits stay on this machine.</p>}
+            <p className="text-xs leading-relaxed text-muted">
+              Optional: you can commit with git yourself at any time. Only files under <code className="font-mono">collections/</code> are committed
+              from here.
+            </p>
+          </div>
+        ) : (
+          <p className="text-muted">
+            {p.workspace.gitAvailable
+              ? 'This folder is not in a git repository. To keep your requests in source control, open a folder inside a repository below.'
+              : 'git was not found on this machine, so changes cannot be shown or committed from here. Your requests are still saved as files.'}
+          </p>
+        )}
+
+        {p.workspace.recent.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <h3 className="font-medium">Switch workspace</h3>
+            <div className="-mx-2 flex max-h-40 flex-col overflow-auto">
+              {p.workspace.recent.map((recent) => (
+                <button
+                  key={recent}
+                  className="flex h-7 shrink-0 items-center gap-3 rounded-md px-2 text-left hover:bg-hover disabled:opacity-50"
+                  disabled={!!busy}
+                  title={recent}
+                  onClick={() => run('open', () => api.openWorkspace(recent, false), true)}
+                >
+                  <span className="shrink-0">{folderName(recent)}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" dir="rtl">
+                    {recent}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
         <div className="flex flex-col gap-2">
-          <h3 className="font-medium">{git.repo ? 'Switch to another repository' : 'Connect a GitHub repository'}</h3>
+          <h3 className="font-medium">Open another folder</h3>
           <div className="flex gap-2">
-            <input
-              className={`${inputCls} flex-1 font-mono text-xs placeholder:font-sans placeholder:text-[13px]`}
-              aria-label="Repository URL"
-              spellCheck={false}
-              placeholder="git@github.com:you/api-requests.git or https://github.com/you/api-requests"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && connect()}
-            />
-            <button className={`${btnCls} w-[84px]`} disabled={!canConnect} onClick={connect}>
-              {busy === 'connect' ? <Spinner size={13} /> : 'Connect'}
+            <button className={btnCls} disabled={!!busy} onClick={() => setBrowsing(!browsing)}>
+              Browse…
             </button>
-          </div>
-          <p className="text-muted text-xs leading-relaxed">
-            The repository is cloned on this machine using your existing git credentials (SSH key or credential helper).
-            {!git.repo && ' Collections you already have here are copied into it if it has none.'}
-          </p>
-          <div className="flex gap-2">
             <input
               className={`${inputCls} flex-1 font-mono text-xs placeholder:font-sans placeholder:text-[13px]`}
               aria-label="Folder path"
               spellCheck={false}
-              placeholder={`Or open a folder you already cloned, e.g. ${isMac ? '/Users/you/api-requests' : 'C:\\Users\\you\\api-requests'}`}
+              placeholder={`Full path, e.g. ${isMac ? '/Users/you/code/my-service/api-requests' : 'C:\\Users\\you\\code\\my-service\\api-requests'}`}
               value={path}
               onChange={(e) => setPath(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && open()}
@@ -516,6 +580,27 @@ export function RepoModal(p: { workspace: Workspace; onClose: () => void; onChan
               {busy === 'open' ? <Spinner size={13} /> : 'Open'}
             </button>
           </div>
+          {browsing && (
+            <PathBrowser
+              mode="folder"
+              start={path.trim()}
+              onCancel={() => setBrowsing(false)}
+              onPick={([picked]) => {
+                setPath(picked);
+                setBrowsing(false);
+              }}
+            />
+          )}
+          {p.hasCollections && (
+            <label className="flex items-center gap-2 text-muted">
+              <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} />
+              Copy my current collections into it, if it has none yet
+            </label>
+          )}
+          <p className="text-xs leading-relaxed text-muted">
+            Use a folder inside a git repository, for example next to the code of the service the requests belong to. The folder is created if it
+            does not exist.
+          </p>
         </div>
 
         {error && <pre className={`${errorCls} max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs`}>{error}</pre>}

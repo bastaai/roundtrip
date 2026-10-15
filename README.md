@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/app.jpg" alt="Roundtrip showing a collection tree, a request and its JSON response" width="900">
+  <img src="docs/images/app.jpg" alt="Roundtrip showing a collection tree, a request headed by its name, and its JSON response with one object folded" width="900">
 </p>
 
 ## Why we built it

@@ -13,9 +13,7 @@ my-service/
   src/
   api-requests/          <- the workspace
     collections/
-      Users API/
-        _collection.yaml
-        List users.yaml
+      Users API.yaml
 ```
 
 You can open a workspace in three ways:
@@ -55,7 +53,7 @@ Roundtrip reads the workspace from disk each time it needs it, so changes made o
 
 ## Conflicts
 
-Each request is its own file, so two people only conflict when they edit the same request. Resolve the conflict with git as usual. If a file still contains conflict markers, Roundtrip reports it by path when the workspace loads.
+Each collection is one file with its folders and requests in a fixed order (folders first, then requests, by name), so edits to different requests touch different lines and usually merge cleanly. Two people conflict when they change the same or neighbouring lines, typically the same request, or two requests added next to each other. Resolve the conflict with git as usual. If a file still contains conflict markers, Roundtrip reports it by path when the workspace loads.
 
 When you commit from Roundtrip and the remote has conflicting changes, the operation stops, your files are left as they were, and the error explains what happened.
 

@@ -73,7 +73,9 @@ export type GitStatus = { repo: boolean; remote: string; branch: string; upstrea
 export type Workspace = { path: string; gitAvailable: boolean; git: GitStatus; recent: string[] };
 
 // A gRPC method: its message types and an example request message as JSON.
-export type GrpcMethodInfo = { input: string; output: string; streaming: boolean; template: string };
+// An enum field of a request message: its JSON path ("*" for each list element or map value) and value names.
+export type GrpcEnum = { path: string[]; enum: string; values: string[] };
+export type GrpcMethodInfo = { input: string; output: string; streaming: boolean; template: string; enums?: GrpcEnum[] };
 
 // One directory, as listed for the folder and file browser.
 export type FsEntry = { name: string; dir: boolean };

@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { emptyRequest, uid } from '../lib/request';
-import { addItem, filterCollections, isFolder, mapItem, moveItem, removeItem } from '../lib/tree';
+import { addItem, ancestorIds, filterCollections, isFolder, mapItem, moveItem, removeItem } from '../lib/tree';
 import type { Collection, HistoryEntry, Item } from '../types';
 import { btnCls, Confirm, ghostBtnCls, Icon, IconButton, Method, statusColor, Tabs } from './ui';
 
@@ -23,7 +23,17 @@ type Props = {
 
 export function Sidebar(p: Props) {
   const [view, setView] = useState<'collections' | 'history'>('collections');
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Collections and folders start collapsed; the ones opened are remembered on this machine.
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('sidebarExpanded') ?? '[]'));
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem('sidebarExpanded', JSON.stringify([...expanded]));
+  }, [expanded]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [asking, setAsking] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
@@ -34,15 +44,23 @@ export function Sidebar(p: Props) {
   const filtering = filter.trim() !== '';
   // Only what is drawn is narrowed; every change is made to the full collection.
   const shown = filterCollections(p.collections, filter);
-  const isOpen = (id: string) => filtering || !collapsed.has(id);
+  const isOpen = (id: string) => filtering || expanded.has(id);
 
   const setOpen = (id: string, open: boolean) =>
-    setCollapsed((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
-      if (open) next.delete(id);
-      else next.add(id);
+      if (open) next.add(id);
+      else next.delete(id);
       return next;
     });
+
+  // The request being shown is always visible in the tree, wherever it was opened from.
+  useEffect(() => {
+    if (!p.activeItemId) return;
+    const ids = ancestorIds(p.collections, p.activeItemId);
+    setExpanded((prev) => (ids.every((id) => prev.has(id)) ? prev : new Set([...prev, ...ids])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.activeItemId]);
 
   const newCollection = () => {
     const c: Collection = { id: uid(), name: 'New Collection', items: [] };

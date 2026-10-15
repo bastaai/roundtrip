@@ -54,6 +54,7 @@ func Describe(ctx context.Context, r model.Request, vars map[string]string, p Pr
 		Output:    string(method.Output().FullName()),
 		Streaming: method.IsStreamingClient() || method.IsStreamingServer(),
 		Template:  Template(method.Input()),
+		Enums:     Enums(method.Input()),
 	}, nil
 }
 
@@ -67,6 +68,46 @@ func Template(md protoreflect.MessageDescriptor) string {
 	var b strings.Builder
 	writeMessage(&b, md, "", map[protoreflect.FullName]bool{})
 	return b.String()
+}
+
+// Enums lists the enum fields reachable from md, walked like Template
+// (declaration order, well-known types skipped, a message containing itself
+// not entered again) except that every member of a oneof is included. A path
+// segment "*" stands for every element of a list or value of a map.
+func Enums(md protoreflect.MessageDescriptor) []model.GRPCEnum {
+	return appendEnums(nil, md, nil, map[protoreflect.FullName]bool{})
+}
+
+func appendEnums(out []model.GRPCEnum, md protoreflect.MessageDescriptor, path []string, open map[protoreflect.FullName]bool) []model.GRPCEnum {
+	if _, ok := wellKnown[md.FullName()]; ok || open[md.FullName()] {
+		return out
+	}
+	open[md.FullName()] = true
+	defer delete(open, md.FullName())
+
+	fields := md.Fields()
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		p := append(path[:len(path):len(path)], fd.JSONName())
+		if fd.IsMap() {
+			fd = fd.MapValue()
+			p = append(p, "*")
+		} else if fd.IsList() {
+			p = append(p, "*")
+		}
+		switch fd.Kind() {
+		case protoreflect.EnumKind:
+			ed := fd.Enum()
+			values := make([]string, ed.Values().Len())
+			for j := range values {
+				values[j] = string(ed.Values().Get(j).Name())
+			}
+			out = append(out, model.GRPCEnum{Path: p, Enum: string(ed.FullName()), Values: values})
+		case protoreflect.MessageKind, protoreflect.GroupKind:
+			out = appendEnums(out, fd.Message(), p, open)
+		}
+	}
+	return out
 }
 
 // wellKnown are the types with their own JSON form instead of an object.

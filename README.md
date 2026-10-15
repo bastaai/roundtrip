@@ -37,7 +37,7 @@ We could not find that, so we built it, and we are making it open source because
 
 ## What makes it different
 
-- **Your requests live in git.** Every request is one readable YAML file. Review changes in a pull request, branch them with your code, and roll them back like anything else.
+- **Your requests live in git.** Every collection is one readable YAML file. Review changes in a pull request, branch them with your code, and roll them back like anything else.
 - **No account, no cloud.** Roundtrip runs entirely on your machine and saves to a folder you choose. There is nothing to sign in to or connect.
 - **Secrets stay local.** Environments and their values are stored on your machine only and are never written to the repository.
 - **One tool for three protocols.** HTTP, GraphQL and gRPC (with `.proto` files or server reflection) share the same collections, variables and tests.
@@ -89,31 +89,35 @@ open dist/Roundtrip.app
 
 See [Getting started](docs/getting-started.md) for a full walkthrough.
 
-## What a request looks like on disk
+## What a collection looks like on disk
 
 ```yaml
-id: 5f0c1c1e9a3b4d21
-name: Log in
-method: POST
-url: '{{baseUrl}}/login'
-body:
-  mode: raw
-  raw: |-
-    {
-      "email": "ada@example.com",
-      "password": "{{password}}"
-    }
-  contentType: application/json
-tests:
-  - target: status
-    op: eq
-    value: "200"
-extract:
-  - var: token
-    from: body.access_token
+# collections/Auth.yaml
+id: 9d2c6c0a51f84b17
+name: Auth
+requests:
+  - id: 5f0c1c1e9a3b4d21
+    name: Log in
+    method: POST
+    url: '{{baseUrl}}/login'
+    body:
+      mode: raw
+      raw: |-
+        {
+          "email": "ada@example.com",
+          "password": "{{password}}"
+        }
+      contentType: application/json
+    tests:
+      - target: status
+        op: eq
+        value: "200"
+    extract:
+      - var: token
+        from: body.access_token
 ```
 
-Folders are directories and each request is one file, so a change to a request is a small, readable diff. The full layout is described in [File format](docs/file-format.md).
+Each collection is one file, with its folders and requests in a fixed order and bodies written line by line, so a change to a request is a small, readable diff. The full layout is described in [File format](docs/file-format.md).
 
 ## Run collections from the terminal
 

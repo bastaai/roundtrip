@@ -42,6 +42,7 @@ export const api = {
     call<string[]>('POST', '/grpc/methods', { request, environmentId, proto: normalizeProto(proto) }),
   grpcDescribe: (request: Req, environmentId: string, proto?: ProtoConfig) =>
     call<GrpcMethodInfo>('POST', '/grpc/describe', { request, environmentId, proto: normalizeProto(proto) }),
+  grpcLocal: () => call<{ address: string }>('GET', '/grpc/local').then((r) => r.address),
   checkProto: (proto: ProtoConfig, environmentId: string) => call<ProtoCheck>('POST', '/proto/check', { proto, environmentId }),
   parseCurl: (command: string) => call<Req>('POST', '/curl/parse', { command }),
   exportCurl: (request: Req, environmentId: string) =>

@@ -81,7 +81,7 @@ A repository laid out like this:
 ```
 api-requests/
   collections/
-    Billing/
+    Billing.yaml
   protos/
     billing/v1/payments.proto
     common/money.proto
@@ -89,10 +89,10 @@ api-requests/
 
 needs a single import root, `protos`. With the files list left empty, both proto files are loaded, and `payments.proto` can `import "common/money.proto";`.
 
-The configuration is saved in the collection:
+The configuration is saved at the top of the collection file:
 
 ```yaml
-# collections/Billing/_collection.yaml
+# collections/Billing.yaml
 id: 9d2c6c0a51f84b17
 name: Billing
 proto:

@@ -170,7 +170,7 @@ export function Select({
   );
 }
 
-export function Segmented<T extends string>(p: { options: { id: T; label: ReactNode }[]; value: T; onChange: (id: T) => void; label: string }) {
+export function Segmented<T extends string>(p: { options: { id: T; label: ReactNode; title?: string }[]; value: T; onChange: (id: T) => void; label: string }) {
   return (
     <div role="radiogroup" aria-label={p.label} className="inline-flex shrink-0 gap-0.5 rounded-md bg-hover p-0.5">
       {p.options.map((o) => (
@@ -179,6 +179,7 @@ export function Segmented<T extends string>(p: { options: { id: T; label: ReactN
           type="button"
           role="radio"
           aria-checked={o.id === p.value}
+          title={o.title}
           onClick={() => p.onChange(o.id)}
           className={`h-6 rounded-[5px] px-2 whitespace-nowrap transition-colors duration-100 ${
             o.id === p.value ? 'bg-raised text-fg shadow-seg' : 'text-muted hover:text-fg'
@@ -191,7 +192,7 @@ export function Segmented<T extends string>(p: { options: { id: T; label: ReactN
   );
 }
 
-export function Tabs<T extends string>(p: { tabs: { id: T; label: ReactNode }[]; active: T; onChange: (id: T) => void; right?: ReactNode }) {
+export function Tabs<T extends string>(p: { tabs: { id: T; label: ReactNode; title?: string }[]; active: T; onChange: (id: T) => void; right?: ReactNode }) {
   return (
     <div className="flex h-9 shrink-0 items-stretch gap-1 border-b border-line px-3">
       <div role="tablist" className="-mx-1.5 flex items-stretch gap-1">
@@ -201,6 +202,7 @@ export function Tabs<T extends string>(p: { tabs: { id: T; label: ReactNode }[];
             type="button"
             role="tab"
             aria-selected={t.id === p.active}
+            title={t.title}
             onClick={() => p.onChange(t.id)}
             className={`relative -mb-px flex items-center border-b-2 px-1.5 whitespace-nowrap transition-colors duration-100 ${
               t.id === p.active ? 'border-accent text-fg font-medium' : 'border-transparent text-muted hover:text-fg'

@@ -195,4 +195,16 @@ type GRPCMethod struct {
 	Streaming bool   `json:"streaming"`
 	// Template is an example request message as JSON, every field present.
 	Template string `json:"template"`
+	// Enums lists the enum fields of the input message and their values.
+	Enums []GRPCEnum `json:"enums,omitempty"`
+}
+
+// GRPCEnum is one enum field reachable from a gRPC input message.
+type GRPCEnum struct {
+	// Path is the JSON keys from the top of the message to the value; "*"
+	// stands for every element of a list or every value of a map.
+	Path []string `json:"path"`
+	// Enum is the enum's full name, Values its value names in declaration order.
+	Enum   string   `json:"enum"`
+	Values []string `json:"values"`
 }

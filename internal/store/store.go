@@ -1,14 +1,17 @@
 // Package store persists the workspace as plain files meant to live in a git
-// repository: one YAML file per request, one directory per folder.
+// repository: one YAML file per collection, holding its folders and requests.
 //
-//	<workspace>/collections/<collection>/_collection.yaml   (id, name, proto config)
-//	<workspace>/collections/<collection>/<request>.yaml
-//	<workspace>/collections/<collection>/<folder>/_folder.yaml
+//	<workspace>/collections/<collection>.yaml
 //
 // YAML keeps multi-line bodies and queries as block scalars, so a change to
 // one line of a body is a one-line diff. Everything is read from disk on each
 // call so a `git pull` shows up without a restart. Environments and history are
 // per-machine and live as JSON in the local directory, outside the workspace.
+//
+// Workspaces from before the single file still read: a directory under
+// collections/ with a _collection.yaml, a _folder.yaml per folder directory
+// and one YAML file per request. Saving such a collection writes its single
+// file and removes those files, leaving anything else in the directory.
 package store
 
 import (
@@ -48,7 +51,25 @@ type Store struct {
 	mu    sync.Mutex
 }
 
-// Proto is only used by collections.
+// collectionFile is the content of collections/<collection>.yaml. Folders
+// come before requests, each sorted by name, as the sidebar shows them.
+type collectionFile struct {
+	ID       string             `json:"id" yaml:"id"`
+	Name     string             `json:"name" yaml:"name"`
+	Proto    *model.ProtoConfig `json:"proto,omitempty" yaml:"proto,omitempty"`
+	Folders  []folderFile       `json:"folders,omitempty" yaml:"folders,omitempty"`
+	Requests []requestFile      `json:"requests,omitempty" yaml:"requests,omitempty"`
+}
+
+type folderFile struct {
+	ID       string        `json:"id" yaml:"id"`
+	Name     string        `json:"name" yaml:"name"`
+	Folders  []folderFile  `json:"folders,omitempty" yaml:"folders,omitempty"`
+	Requests []requestFile `json:"requests,omitempty" yaml:"requests,omitempty"`
+}
+
+// meta is _collection.yaml or _folder.yaml in the old layout. Proto is only
+// used by collections.
 type meta struct {
 	ID    string             `json:"id" yaml:"id"`
 	Name  string             `json:"name" yaml:"name"`
@@ -89,25 +110,47 @@ func LocalDir(dataDir, workspace string) string {
 
 // ---- collections ----
 
+// untitled names a hand-written request or folder that has no name.
+const untitled = "Untitled"
+
+// stored is a collection on disk: its single file, or a directory in the old
+// layout.
+type stored struct {
+	name string
+	dir  bool
+	id   string
+}
+
 func (s *Store) Collections() ([]*model.Collection, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	root := filepath.Join(s.dir, "collections")
+	list, err := s.stored(root)
+	if err != nil {
+		return nil, err
+	}
+	files := map[string]bool{}
+	for _, e := range list {
+		if !e.dir {
+			files[e.id] = true
+		}
+	}
 	out := []*model.Collection{}
-	for _, name := range subdirs(root) {
-		dir := filepath.Join(root, name)
-		m, err := s.readMeta(dir, collectionMeta)
+	for _, e := range list {
+		path := filepath.Join(root, e.name)
+		var c *model.Collection
+		switch {
+		case !e.dir:
+			c, err = s.readCollectionFile(path)
+		case !files[e.id]:
+			c, err = s.readCollectionDir(path)
+		default:
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
-		items, err := s.readItems(dir)
-		if err != nil {
-			return nil, err
-		}
-		if m.Proto.Empty() {
-			m.Proto = nil
-		}
-		out = append(out, &model.Collection{ID: m.ID, Name: m.Name, Proto: m.Proto, Items: items})
+		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return lower(out[i].Name) < lower(out[j].Name) })
 	return out, nil
@@ -125,42 +168,211 @@ func (s *Store) SaveCollection(c *model.Collection) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
+	list, err := s.stored(root)
+	if err != nil {
+		return err
+	}
 	old := ""
 	used := map[string]bool{}
-	for _, name := range subdirs(root) {
-		m, err := s.readMeta(filepath.Join(root, name), collectionMeta)
-		if err != nil {
-			return err
-		}
-		if m.ID == c.ID {
-			old = name
-		} else {
-			used[lower(name)] = true
+	for _, e := range list {
+		switch {
+		case e.dir:
+		case e.id == c.ID:
+			old = e.name
+		default:
+			used[lower(strings.TrimSuffix(e.name, ext))] = true
 		}
 	}
-	name := uniqueName(sanitize(c.Name), used)
+	name := uniqueName(sanitize(c.Name), used) + ext
 	if old != "" && old != name {
 		if err := os.Rename(filepath.Join(root, old), filepath.Join(root, name)); err != nil {
 			return err
 		}
 	}
-	return writeDir(filepath.Join(root, name), collectionMeta, meta{ID: c.ID, Name: c.Name, Proto: c.Proto}, c.Items)
+	folders, requests := toFile(c.Items)
+	f := collectionFile{ID: c.ID, Name: c.Name, Proto: c.Proto, Folders: folders, Requests: requests}
+	if err := writeYAML(filepath.Join(root, name), f); err != nil {
+		return err
+	}
+	return s.removeDirs(root, list, c.ID)
 }
 
 func (s *Store) DeleteCollection(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	root := filepath.Join(s.dir, "collections")
-	for _, name := range subdirs(root) {
-		m, err := s.readMeta(filepath.Join(root, name), collectionMeta)
-		if err != nil {
-			return err
+	list, err := s.stored(root)
+	if err != nil {
+		return err
+	}
+	for _, e := range list {
+		if !e.dir && e.id == id {
+			if err := os.Remove(filepath.Join(root, e.name)); err != nil {
+				return err
+			}
 		}
-		if m.ID == id {
-			return os.RemoveAll(filepath.Join(root, name))
+	}
+	return s.removeDirs(root, list, id)
+}
+
+// stored lists the collections under root with their ids. A directory counts
+// only while it still holds old-layout files, so one left with just a README
+// after its collection moved to a single file is not a collection.
+func (s *Store) stored(root string) ([]stored, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	var out []stored
+	for _, e := range entries {
+		name := e.Name()
+		path := filepath.Join(root, name)
+		switch {
+		case strings.HasPrefix(name, "."):
+		case e.IsDir():
+			if files, _ := legacyFiles(path, collectionMeta); len(files) == 0 {
+				continue
+			}
+			m, err := s.readMeta(path, collectionMeta)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, stored{name: name, dir: true, id: m.ID})
+		case strings.HasPrefix(name, "_"), !strings.HasSuffix(name, ext):
+		default:
+			var head struct {
+				ID string `yaml:"id"`
+			}
+			if err := readYAML(path, &head); err != nil {
+				return nil, err
+			}
+			if head.ID == "" {
+				head.ID = s.pathID(path)
+			}
+			out = append(out, stored{name: name, id: head.ID})
+		}
+	}
+	return out, nil
+}
+
+// removeDirs removes the old-layout files of collection id from root.
+func (s *Store) removeDirs(root string, list []stored, id string) error {
+	for _, e := range list {
+		if e.dir && e.id == id {
+			if err := removeLegacy(filepath.Join(root, e.name)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func (s *Store) readCollectionFile(path string) (*model.Collection, error) {
+	f := collectionFile{}
+	if err := readYAML(path, &f); err != nil {
+		return nil, err
+	}
+	if f.ID == "" {
+		f.ID = s.pathID(path)
+	}
+	if f.Name == "" {
+		f.Name = strings.TrimSuffix(filepath.Base(path), ext)
+	}
+	if f.Proto.Empty() {
+		f.Proto = nil
+	}
+	rel, err := filepath.Rel(s.dir, path)
+	if err != nil {
+		rel = path
+	}
+	items := s.fromFile(filepath.ToSlash(rel), f.Folders, f.Requests, map[string]bool{})
+	return &model.Collection{ID: f.ID, Name: f.Name, Proto: f.Proto, Items: items}, nil
+}
+
+// fromFile returns folders first, then requests, each sorted by name. An item
+// without an id gets one from its file and the names leading to it (key), so
+// it keeps it from one read to the next.
+func (s *Store) fromFile(key string, folders []folderFile, requests []requestFile, seen map[string]bool) []*model.Item {
+	id := func(id, name string) string {
+		if id != "" {
+			return id
+		}
+		return hashID(uniqueName(key+"/"+name, seen))
+	}
+	out := []*model.Item{}
+	for _, f := range folders {
+		if f.Name == "" {
+			f.Name = untitled
+		}
+		f.ID = id(f.ID, f.Name)
+		out = append(out, &model.Item{ID: f.ID, Name: f.Name, Items: s.fromFile(key+"/"+f.Name, f.Folders, f.Requests, seen)})
+	}
+	sortItems(out)
+	reqs := []*model.Item{}
+	for _, rf := range requests {
+		if rf.Name == "" {
+			rf.Name = untitled
+		}
+		req := rf.Request
+		reqs = append(reqs, &model.Item{ID: id(rf.ID, rf.Name), Name: rf.Name, Request: &req})
+	}
+	sortItems(reqs)
+	return append(out, reqs...)
+}
+
+// toFile splits items into the folders and requests of a file, sorted so the
+// file only changes when the collection does.
+func toFile(items []*model.Item) ([]folderFile, []requestFile) {
+	var folders, requests []*model.Item
+	for _, it := range items {
+		if it.Request == nil {
+			folders = append(folders, it)
+		} else {
+			requests = append(requests, it)
+		}
+	}
+	sortItems(folders)
+	sortItems(requests)
+	var ff []folderFile
+	for _, it := range folders {
+		sub, reqs := toFile(it.Items)
+		ff = append(ff, folderFile{ID: it.ID, Name: it.Name, Folders: sub, Requests: reqs})
+	}
+	var rf []requestFile
+	for _, it := range requests {
+		rf = append(rf, requestFile{ID: it.ID, Name: it.Name, Request: withoutDefaults(*it.Request)})
+	}
+	return ff, rf
+}
+
+// sortItems orders by name as the sidebar does, then by exact name and id so
+// the order never depends on the order items arrived in.
+func sortItems(items []*model.Item) {
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		if lower(a.Name) != lower(b.Name) {
+			return lower(a.Name) < lower(b.Name)
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.ID < b.ID
+	})
+}
+
+func (s *Store) readCollectionDir(dir string) (*model.Collection, error) {
+	m, err := s.readMeta(dir, collectionMeta)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.readItems(dir)
+	if err != nil {
+		return nil, err
+	}
+	if m.Proto.Empty() {
+		m.Proto = nil
+	}
+	return &model.Collection{ID: m.ID, Name: m.Name, Proto: m.Proto, Items: items}, nil
 }
 
 func (s *Store) readMeta(dir, file string) (meta, error) {
@@ -177,7 +389,8 @@ func (s *Store) readMeta(dir, file string) (meta, error) {
 	return m, nil
 }
 
-// readItems returns folders first, then requests, each sorted by name.
+// readItems reads an old-layout directory and returns folders first, then
+// requests, each sorted by name.
 func (s *Store) readItems(dir string) ([]*model.Item, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -214,15 +427,55 @@ func (s *Store) readItems(dir string) ([]*model.Item, error) {
 			requests = append(requests, &model.Item{ID: rf.ID, Name: rf.Name, Request: &req})
 		}
 	}
-	for _, list := range [][]*model.Item{folders, requests} {
-		sort.SliceStable(list, func(i, j int) bool { return lower(list[i].Name) < lower(list[j].Name) })
-	}
+	sortItems(folders)
+	sortItems(requests)
 	return append(folders, requests...), nil
 }
 
-// withoutDefaults drops what a request file does not need to say because it
-// is the default anyway: no auth, an API key in a header, an empty body and
-// its content type. The editor fills these in, so without this every saved
+// legacyFiles lists the files of an old-layout directory that readItems reads
+// (plus its meta file), and the directories it looks in, deepest first.
+func legacyFiles(dir, metaFile string) (files, dirs []string) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		name := e.Name()
+		path := filepath.Join(dir, name)
+		switch {
+		case name == metaFile && !e.IsDir():
+			files = append(files, path)
+		case strings.HasPrefix(name, "."), strings.HasPrefix(name, "_"):
+		case e.IsDir():
+			f, d := legacyFiles(path, folderMeta)
+			files, dirs = append(files, f...), append(dirs, d...)
+		case strings.HasSuffix(name, ext):
+			files = append(files, path)
+		}
+	}
+	return files, append(dirs, dir)
+}
+
+// removeLegacy removes the old-layout files under dir, then the directories
+// that leaves empty. Anything else (a README, notes) stays where it is.
+func removeLegacy(dir string) error {
+	files, dirs := legacyFiles(dir, collectionMeta)
+	for _, f := range files {
+		if err := os.Remove(f); err != nil {
+			return err
+		}
+	}
+	for _, d := range dirs {
+		if entries, err := os.ReadDir(d); err != nil || len(entries) > 0 {
+			continue
+		}
+		if err := os.Remove(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// withoutDefaults drops what a request does not need to say because it is
+// the default anyway: no auth, an API key in a header, an empty body and its
+// content type. The editor fills these in, so without this every saved
 // request would carry them.
 func withoutDefaults(r model.Request) model.Request {
 	if r.Auth.In == "header" {
@@ -236,50 +489,6 @@ func withoutDefaults(r model.Request) model.Request {
 		r.Body = model.Body{}
 	}
 	return r
-}
-
-// writeDir syncs dir to match items. Stale request files and folders are
-// removed; files this app doesn't own (READMEs, dotfiles) are left alone.
-func writeDir(dir, metaFile string, m meta, items []*model.Item) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := writeYAML(filepath.Join(dir, metaFile), m); err != nil {
-		return err
-	}
-	keep := map[string]bool{lower(metaFile): true}
-	usedDirs, usedFiles := map[string]bool{}, map[string]bool{}
-	for _, it := range items {
-		if it.Request == nil {
-			name := uniqueName(sanitize(it.Name), usedDirs)
-			keep[lower(name)] = true
-			if err := writeDir(filepath.Join(dir, name), folderMeta, meta{ID: it.ID, Name: it.Name}, it.Items); err != nil {
-				return err
-			}
-			continue
-		}
-		name := uniqueName(sanitize(it.Name), usedFiles) + ext
-		keep[lower(name)] = true
-		if err := writeYAML(filepath.Join(dir, name), requestFile{ID: it.ID, Name: it.Name, Request: withoutDefaults(*it.Request)}); err != nil {
-			return err
-		}
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if strings.HasPrefix(name, ".") || keep[lower(name)] {
-			continue
-		}
-		if e.IsDir() || strings.HasSuffix(name, ext) {
-			if err := os.RemoveAll(filepath.Join(dir, name)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // ---- environments ----
@@ -439,19 +648,12 @@ func (s *Store) pathID(path string) string {
 	if err != nil {
 		rel = path
 	}
-	sum := sha1.Sum([]byte(filepath.ToSlash(rel)))
-	return hex.EncodeToString(sum[:8])
+	return hashID(filepath.ToSlash(rel))
 }
 
-func subdirs(root string) []string {
-	var out []string
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			out = append(out, e.Name())
-		}
-	}
-	return out
+func hashID(key string) string {
+	sum := sha1.Sum([]byte(key))
+	return hex.EncodeToString(sum[:8])
 }
 
 // readJSON leaves v untouched when the file does not exist.

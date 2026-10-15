@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Item } from '../types';
 import { emptyRequest } from './request';
-import { addItem, countRequests, filterCollections, findItem, folderPath, freeName, mapItem, moveItem, parentOf, subtreeIds, removeItem, sortItems } from './tree';
+import { addItem, ancestorIds, countRequests, filterCollections, findItem, folderPath, freeName, mapItem, moveItem, parentOf, subtreeIds, removeItem, sortItems } from './tree';
 
 const req = (id: string, name = id): Item => ({ id, name, request: emptyRequest() });
 const folder = (id: string, items: Item[] = [], name = id): Item => ({ id, name, items });
@@ -131,4 +131,22 @@ it('parentOf and subtreeIds', () => {
   expect(parentOf(tree(), 'r1')).toBeNull();
   expect(parentOf(tree(), 'nope')).toBeUndefined();
   expect(subtreeIds(tree()[0])).toEqual(['f1', 'r2', 'f2', 'r3']);
+});
+
+describe('ancestorIds', () => {
+  const req = (id: string): Item => ({ id, name: id, request: emptyRequest() });
+  const collections = [
+    { id: 'c1', items: [req('top')] },
+    { id: 'c2', items: [{ id: 'f1', name: 'f1', items: [{ id: 'f2', name: 'f2', items: [req('deep')] }] }] },
+  ];
+
+  it('lists the collection and folders that hold an item, outermost first', () => {
+    expect(ancestorIds(collections, 'top')).toEqual(['c1']);
+    expect(ancestorIds(collections, 'deep')).toEqual(['c2', 'f1', 'f2']);
+    expect(ancestorIds(collections, 'f2')).toEqual(['c2', 'f1']);
+  });
+
+  it('is empty for an item that is not there', () => {
+    expect(ancestorIds(collections, 'nope')).toEqual([]);
+  });
 });

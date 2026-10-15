@@ -159,6 +159,9 @@ func (s *server) openWorkspace(dir string, carry bool) error {
 	return err
 }
 
+// localGRPC is where GET /api/grpc/local looks; a variable so tests can point it elsewhere.
+var localGRPC = "localhost:50051"
+
 func New(cfg Config) (http.Handler, error) {
 	s := &server{cfg: cfg, client: &http.Client{Timeout: 60 * time.Second}}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
@@ -301,6 +304,16 @@ func New(cfg Config) (http.Handler, error) {
 		respond(w)(map[string]string{"command": curl.Export(sender.ResolveRequest(in.Request, vars))}, err)
 	})
 
+	// The usual address of a gRPC server under development, offered for a gRPC
+	// request with no address yet when something is listening there.
+	mux.HandleFunc("GET /api/grpc/local", func(w http.ResponseWriter, r *http.Request) {
+		address := ""
+		if conn, err := net.DialTimeout("tcp", localGRPC, 300*time.Millisecond); err == nil {
+			conn.Close()
+			address = "grpc://" + localGRPC
+		}
+		respond(w)(map[string]string{"address": address}, nil)
+	})
 	mux.HandleFunc("POST /api/grpc/describe", func(w http.ResponseWriter, r *http.Request) {
 		var in sendInput
 		if !decode(w, r, &in) {

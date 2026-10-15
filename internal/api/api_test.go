@@ -114,7 +114,7 @@ func TestOpenRepositoryFolderAndSync(t *testing.T) {
 	if !info.Git.Repo || info.Git.Remote != remote || mustEval(t, info.Path) != mustEval(t, repo) {
 		t.Fatalf("after open: %#v", info)
 	}
-	if len(info.Git.Changes) != 2 {
+	if len(info.Git.Changes) != 1 {
 		t.Fatalf("carried-over collection should show as uncommitted: %#v", info.Git.Changes)
 	}
 	var cols []model.Collection
@@ -137,14 +137,16 @@ func TestOpenRepositoryFolderAndSync(t *testing.T) {
 	if log := git(t, remote, "log", "--format=%s", "main"); log != "Add API collection" {
 		t.Fatalf("remote log: %q", log)
 	}
-	if files := git(t, remote, "ls-tree", "-r", "--name-only", "main"); files != "collections/API/Ping.yaml\ncollections/API/_collection.yaml" {
+	if files := git(t, remote, "ls-tree", "-r", "--name-only", "main"); files != "collections/API.yaml" {
 		t.Fatalf("remote files: %q", files)
 	}
 
 	// A teammate pushes; pull brings it in.
 	mate := filepath.Join(t.TempDir(), "mate")
 	git(t, "", "clone", remote, mate)
-	os.WriteFile(filepath.Join(mate, "collections", "API", "Pong.yaml"), []byte("method: GET\nurl: http://y\n"), 0o644)
+	f, _ := os.OpenFile(filepath.Join(mate, "collections", "API.yaml"), os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString("  - id: r2\n    name: Pong\n    method: GET\n    url: http://y\n")
+	f.Close()
 	git(t, mate, "add", "-A")
 	git(t, mate, "commit", "-m", "Add pong")
 	git(t, mate, "push")
@@ -599,8 +601,8 @@ func TestGRPCWithProtoFiles(t *testing.T) {
 	if _, has := cols[1]["proto"]; has || len(cols) != 2 || !reflect.DeepEqual(cols[0]["proto"], map[string]any{"roots": []any{"{{protoRoot}}"}, "files": []any{"grpc/health/v1/health.proto"}}) {
 		t.Fatalf("collections: %#v", cols)
 	}
-	if file, _ := os.ReadFile(filepath.Join(ws.Path, "collections", "Health", "_collection.yaml")); !strings.Contains(string(file), "proto:\n  roots:\n    - '{{protoRoot}}'\n  files:\n    - grpc/health/v1/health.proto\n") {
-		t.Fatalf("_collection.yaml:\n%s", file)
+	if file, _ := os.ReadFile(filepath.Join(ws.Path, "collections", "Health.yaml")); !strings.Contains(string(file), "proto:\n  roots:\n    - '{{protoRoot}}'\n  files:\n    - grpc/health/v1/health.proto\n") {
+		t.Fatalf("Health.yaml:\n%s", file)
 	}
 
 	c.do("PUT", "/api/environments/e1", model.Environment{Name: "dev", Variables: []model.KV{
@@ -702,5 +704,29 @@ func TestHistoryKeepsEachResponse(t *testing.T) {
 	}
 	if code := c.do("GET", "/api/history/0123456789abcdef/response", nil, nil); code != 404 {
 		t.Fatalf("unknown entry: %d", code)
+	}
+}
+
+func TestLocalGRPC(t *testing.T) {
+	c := setup(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	old := localGRPC
+	t.Cleanup(func() { localGRPC = old })
+	localGRPC = addr
+
+	var got map[string]string
+	c.do("GET", "/api/grpc/local", nil, &got)
+	if got["address"] != "grpc://"+addr {
+		t.Fatalf("listening: got %q", got["address"])
+	}
+
+	ln.Close()
+	c.do("GET", "/api/grpc/local", nil, &got)
+	if got["address"] != "" {
+		t.Fatalf("closed: got %q", got["address"])
 	}
 }

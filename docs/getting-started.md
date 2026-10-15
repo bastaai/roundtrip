@@ -56,14 +56,12 @@ The request goes out on the left and the response comes back on the right, heade
 
 There is nothing to save. As soon as you type, the request is written to the collection you are working in (a new workspace starts one called *Requests*), and every later edit is written as you make it. Select the name at the top of the page, type `Zen` and press <kbd>Enter</kbd>.
 
-A collection is a folder in your workspace. You can nest folders inside it, drag requests and folders between them, and every request is one YAML file:
+A collection is one YAML file in your workspace, holding its folders and requests. You can nest folders inside it and drag requests and folders between them:
 
 ```
 api-requests/
   collections/
-    GitHub/
-      _collection.yaml
-      Zen.yaml
+    GitHub.yaml
 ```
 
 The files are plain text, so they diff and review like code.

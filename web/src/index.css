@@ -231,6 +231,8 @@
 .json-str { color: var(--json-str); }
 .json-num { color: var(--json-num); }
 .json-lit { color: var(--json-lit); }
+.json-var { color: var(--json-key); text-decoration: underline dotted; text-underline-offset: 2px; }
+.json-var-missing { color: var(--danger); text-decoration: underline dotted; text-underline-offset: 2px; }
 
 /* Native macOS window without a title bar (set in main.tsx). */
 [data-shell='mac'] header {

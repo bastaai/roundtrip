@@ -7,25 +7,21 @@ A workspace is a folder. Everything Roundtrip saves there lives under `collectio
 ```
 <workspace>/
   collections/
-    Users API/                 a collection
-      _collection.yaml         its id, name and proto configuration
-      List users.yaml          a request
-      Auth/                    a folder
-        _folder.yaml           its id and name
-        Log in.yaml
+    Users API.yaml             a collection, with its folders and requests
+    Billing.yaml
 ```
 
-- A **collection** is a directory under `collections/`.
-- A **folder** is a directory inside a collection. Folders nest.
-- A **request** is a `.yaml` file.
+- A **collection** is one `.yaml` file under `collections/`.
+- A **folder** is an entry under `folders:` in that file. Folders nest.
+- A **request** is an entry under `requests:`, in the collection or in a folder.
 
-File and directory names follow the names you give in the app. Characters that are not valid in file names on macOS or Windows are replaced with `-`. The real name is always stored inside the file.
+The file name follows the collection name you give in the app. Characters that are not valid in file names on macOS or Windows are replaced with `-`, and two collections whose names would give the same file name get `Name.yaml` and `Name 2.yaml`. The real name is always stored inside the file. Renaming a collection renames its file; deleting it removes the file.
 
-Roundtrip only manages `.yaml` files and directories under `collections/`. Other files you place there, such as a `README.md`, are left alone. Files and directories whose names start with a dot are ignored.
+Roundtrip only manages the `.yaml` files directly under `collections/`. Other files you place there, such as a `README.md`, are left alone. Files whose names start with a dot or `_` are ignored.
 
-Items are shown folders first, then requests, each sorted by name.
+Folders and requests are written folders first, then requests, each sorted by name, which is also how they are shown. The order does not depend on how you arranged things in the app, and a collection that has not changed is never rewritten, so the file only shows up in a diff when its content changes.
 
-## `_collection.yaml`
+## Collection files
 
 ```yaml
 id: 9d2c6c0a51f84b17
@@ -36,18 +32,39 @@ proto:
     - '{{protoRoot}}/third_party'
   files:
     - billing/v1/payments.proto
+folders:
+  - id: 1b7e0c55d2a94f06
+    name: Refunds
+    requests:
+      - id: 77a1f3c09e2b4d58
+        name: Refund a charge
+        method: POST
+        url: '{{baseUrl}}/refunds'
+requests:
+  - id: 5f0c1c1e9a3b4d21
+    name: List invoices
+    method: GET
+    url: '{{baseUrl}}/invoices'
 ```
 
 | Field | Meaning |
 |---|---|
 | `id` | Stable identifier. Generated for you. |
-| `name` | Display name |
+| `name` | Display name. Defaults to the file name. |
 | `proto.roots` | Import roots for gRPC. See [gRPC](grpc.md#using-proto-files). |
 | `proto.files` | Proto files to load. Optional. |
+| `folders` | Folders, each with `id`, `name` and its own `folders` and `requests` |
+| `requests` | Requests, described below |
 
-`_folder.yaml` has `id` and `name` only.
+Empty lists are left out.
 
-## Request files
+### Workspaces saved by earlier versions
+
+Earlier versions stored a collection as a directory: `_collection.yaml` for its id, name and proto configuration, a directory with a `_folder.yaml` per folder, and one `.yaml` file per request. Such a directory is still read. The first time Roundtrip saves that collection it writes the single file and removes the old files (`_collection.yaml`, `_folder.yaml` and the request files) and any directories left empty. Anything else in the directory, such as a `README.md`, stays where it is. If a collection exists in both forms, the single file is used.
+
+## Requests
+
+Each entry under `requests:` holds one request. Shown here on its own; in the file it is indented under `requests:` and starts with `- `.
 
 ```yaml
 id: 5f0c1c1e9a3b4d21
@@ -89,8 +106,8 @@ Fields that are empty, or hold their default (no auth, no body, an API key sent 
 
 | Field | Meaning |
 |---|---|
-| `id` | Stable identifier. If you write a file by hand you can omit it. |
-| `name` | Display name. Defaults to the file name. |
+| `id` | Stable identifier. If you write a file by hand you can omit it; one is derived from the file and the names leading to the request, and written the next time Roundtrip saves the collection. |
+| `name` | Display name. Defaults to `Untitled`. |
 | `protocol` | `grpc` for gRPC requests. Omitted for HTTP and GraphQL. |
 | `method` | HTTP method, or `package.Service/Method` for gRPC |
 | `url` | Request URL, or the server address for gRPC |
@@ -160,6 +177,7 @@ Hand-written files work. A few YAML details to keep in mind:
 - Quote values that YAML would read as something else, such as `"200"`, `"true"` or anything starting with `{`.
 - Multi-line text is easiest as a block scalar (`|-`), as in the examples.
 - Unknown fields are ignored and removed the next time Roundtrip saves the file.
+- Folders and requests may be in any order; Roundtrip sorts them the next time it saves the file. A folder without a `name` is called `Untitled`, like a request.
 - A file that cannot be parsed, for example one containing merge-conflict markers, is reported by path when the workspace loads.
 
 ## What is not in the workspace

@@ -1,5 +1,6 @@
 import type { Assertion, Extract } from '../types';
 import { gridActionsCls, gridCellCls, gridHeadCls, gridRowCls, KVEditor } from './KVEditor';
+import { HINTS, OP_HINTS } from '../lib/hints';
 import { IconButton, Select } from './ui';
 
 const OPS: [Assertion['op'], string][] = [
@@ -37,9 +38,15 @@ export function TestsEditor({ tests, extract, onChange }: Props) {
         <span className={labelCls}>Checks on the response</span>
         <div className="-mx-2">
           <div className={gridHeadCls}>
-            <span className="flex-[3] px-2">Target</span>
-            <span className="w-36 shrink-0 px-2.5">Check</span>
-            <span className="flex-[3] px-2">Expected</span>
+            <span className="flex-[3] cursor-help px-2" title={HINTS.target}>
+              Target
+            </span>
+            <span className="w-36 shrink-0 cursor-help px-2.5" title={HINTS.check}>
+              Check
+            </span>
+            <span className="flex-[3] cursor-help px-2" title={HINTS.expected}>
+              Expected
+            </span>
             <span className="w-6 shrink-0" />
           </div>
           {all.map((t, i) => {
@@ -59,11 +66,12 @@ export function TestsEditor({ tests, extract, onChange }: Props) {
                   className="h-6 w-36 shrink-0"
                   selectClassName={`text-xs focus-visible:shadow-focus ${blank ? 'text-faint' : ''}`}
                   aria-label="Check"
+                  title={OP_HINTS[t.op]}
                   value={t.op}
                   onChange={(e) => set(i, { op: e.target.value as Assertion['op'] })}
                 >
                   {OPS.map(([op, label]) => (
-                    <option key={op} value={op}>
+                    <option key={op} value={op} title={OP_HINTS[op]}>
                       {label}
                     </option>
                   ))}
@@ -94,6 +102,8 @@ export function TestsEditor({ tests, extract, onChange }: Props) {
           onChange={(rows) => onChange(tests, rows.map((r) => ({ var: r.key, from: r.value })))}
           keyPlaceholder="Variable"
           valuePlaceholder="From (body.access_token, header.Location, status)"
+          keyHint={HINTS.extractVar}
+          valueHint={HINTS.extractFrom}
         />
       </div>
 

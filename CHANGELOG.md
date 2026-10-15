@@ -22,7 +22,7 @@ The first public version, under active development.
 
 ### Workspaces and files
 
-- Requests are stored as readable YAML files, one per request, in a folder you choose.
+- Requests are stored as readable YAML, one file per collection with its folders and requests, in a folder you choose. Workspaces saved as a directory per collection and a file per request are still read and move to the single file the next time each collection is saved.
 - Git status, optional commit, push and pull for workspaces inside a repository.
 - Switching between recently used workspaces.
 - In-app browser for picking workspace folders, proto roots and proto files.

@@ -6,10 +6,12 @@ import { QuickOpen, type QuickAction } from './components/QuickOpen';
 import { AddressBar, RequestEditor } from './components/RequestEditor';
 import { ResponseView } from './components/ResponseView';
 import { Sidebar } from './components/Sidebar';
+import { VariablesContext } from './components/Variables';
 import { ghostBtnCls, Icon, IconButton, isMod, keyLabel, KEYS, ResizeHandle, Select } from './components/ui';
 import { grpcSource, protoOf, sameProto, withProto } from './lib/proto';
 import { emptyRequest, kindOf, normalizeReq, uid } from './lib/request';
 import { folderName } from './lib/shell';
+import { lookupVariable, withVariable } from './lib/variables';
 import { findItem, folderPath, freeName, mapItem, sortItems, subtreeIds } from './lib/tree';
 import type { Collection, Environment, HistoryEntry, Item, Req, Res, Workspace } from './types';
 
@@ -344,215 +346,231 @@ export default function App() {
       : []),
   ];
 
+  const environment = environments.find((e) => e.id === envId);
+  const variables = {
+    lookup: (name: string) => lookupVariable(name, environment, runtime),
+    environment: environment?.name ?? '',
+    set: environment
+      ? (name: string, value: string) => {
+          const next = withVariable(environment, name, value);
+          setEnvironments((all) => all.map((e) => (e.id === next.id ? next : e)));
+          api.putEnvironment(next).catch(fail);
+        }
+      : undefined,
+  };
+
   return (
-    <div className="h-full flex flex-col">
-      <header className="h-11 shrink-0 flex items-center gap-2 pl-2 pr-2 border-b border-line bg-panel">
-        <IconButton
-          icon="sidebar"
-          title={`${sidebarHidden ? 'Show' : 'Hide'} sidebar (${keyLabel(KEYS.sidebar)})`}
-          active={!sidebarHidden}
-          onClick={() => setSidebarHidden(!sidebarHidden)}
-        />
-        <span className="mx-1 select-none text-fg">
-          <Logo />
-        </span>
-        {workspace && (
-          <button
-            className={`${ghostBtnCls} min-w-0 shrink text-fg`}
-            title={`${workspace.path}\nWorkspace folder and git status`}
-            onClick={openWorkspace}
-          >
-            <span className="truncate">{folderName(workspace.path)}</span>
-            {workspace.git.repo && (
-              <span className="shrink-0 text-xs tabular-nums text-muted">
-                {changeCount > 0 ? `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}` : workspace.git.branch}
-              </span>
-            )}
-          </button>
-        )}
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          <IconButton icon="filePlus" title="New request" onClick={newRequest} />
-          <IconButton icon="search" title={`Go to a request or run a command (${keyLabel(KEYS.quickOpen)})`} onClick={() => setModal('quick')} />
-          <Select
-            bare
-            className="ml-1"
-            selectClassName={envId ? '' : 'text-muted'}
-            value={envId}
-            onChange={(e) => (e.target.value === MANAGE_ENVIRONMENTS ? setModal('env') : setEnvId(e.target.value))}
-            title="Environment"
-            aria-label="Environment"
-          >
-            <option value="">No environment</option>
-            {environments.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-            <option disabled>──────────</option>
-            <option value={MANAGE_ENVIRONMENTS}>Manage environments…</option>
-          </Select>
-        </div>
-      </header>
-
-      <div className="flex-1 flex min-h-0">
-        <Sidebar
-          width={sidebarWidth}
-          hidden={sidebarHidden}
-          collections={collections}
-          history={history}
-          activeItemId={active.source?.itemId}
-          onOpen={openItem}
-          onOpenHistory={(h) => {
-            const page = { ...blankPage(), request: normalizeReq(h.request) };
-            openPage(page);
-            showRun(page.id, h.id);
-          }}
-          onChange={changeCollection}
-          onMove={moveItems}
-          onDelete={deleteCollection}
-          onProto={(c) => setProtoFor(c.id)}
-          onClearHistory={() => {
-            setHistory([]);
-            api.clearHistory().catch(fail);
-          }}
-          onReload={reload}
-        />
-        {!sidebarHidden && (
-          <ResizeHandle
-            axis="x"
-            label="Sidebar width"
-            onMove={resizeSidebar}
-            onNudge={(d) => resizeSidebar(sidebarWidth + d)}
-            onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+    <VariablesContext value={variables}>
+      <div className="h-full flex flex-col">
+        <header className="h-11 shrink-0 flex items-center gap-2 pl-2 pr-2 border-b border-line bg-panel">
+          <IconButton
+            icon="sidebar"
+            title={`${sidebarHidden ? 'Show' : 'Hide'} sidebar (${keyLabel(KEYS.sidebar)})`}
+            active={!sidebarHidden}
+            onClick={() => setSidebarHidden(!sidebarHidden)}
           />
-        )}
-
-        <main className="flex-1 flex flex-col min-w-0">
-          <PageTitle
-            key={active.id}
-            name={active.name}
-            where={whereIs(active)}
-            onRename={(name) => renamePage(active, name)}
-          />
-          <AddressBar
-            key={`bar-${active.id}`}
-            request={active.request}
-            sending={active.sending}
-            onChange={(request) => editRequest(active, request)}
-            onSend={() => send(active)}
-            grpcSource={activeSource.kind}
-            onProtoSettings={() => setProtoFor(active.source?.collectionId ?? null)}
-            onLoadMethods={() => api.grpcMethods(active.request, envId, protoOf(activeSource))}
-            onDescribe={describeMethod}
-          />
-
-          <div ref={pairRef} className={`flex min-h-0 flex-1 ${columns ? '' : 'flex-col'}`}>
-            <div className="min-h-0 min-w-0 shrink-0" style={columns ? { width: `${fitColumns(columnSplit) * 100}%` } : { height: `${split * 100}%` }}>
-              <RequestEditor
-                key={active.id}
-                request={active.request}
-                onChange={(request) => editRequest(active, request)}
-                grpcSource={activeSource.kind}
-                onDescribe={describeMethod}
-              />
-            </div>
-            {columns ? (
-              <ResizeHandle
-                key="columns"
-                axis="x"
-                label="Request and response split"
-                onMove={(x) => {
-                  const rect = pairRef.current?.getBoundingClientRect();
-                  if (rect) resizeColumns((x - rect.left) / rect.width);
-                }}
-                onNudge={(d) => resizeColumns(fitColumns(columnSplit) + d / (pairWidth || 1000))}
-                onReset={() => setColumnSplit(COLUMNS_DEFAULT)}
-              />
-            ) : (
-              <ResizeHandle
-                key="stacked"
-                axis="y"
-                label="Request and response split"
-                onMove={(y) => {
-                  const rect = pairRef.current?.getBoundingClientRect();
-                  if (rect) resizeSplit((y - rect.top) / rect.height);
-                }}
-                onNudge={(d) => resizeSplit(split + d / (pairRef.current?.clientHeight || 600))}
-                onReset={() => setSplit(SPLIT_DEFAULT)}
-              />
-            )}
-            <div className="min-h-0 min-w-0 flex-1">
-              <ResponseView
-                key={active.id}
-                res={active.response}
-                sending={active.sending}
-                runs={active.source ? history.filter((h) => h.itemId === active.source!.itemId) : []}
-                run={active.run}
-                onRun={(run) => showRun(active.id, run)}
-              />
-            </div>
-          </div>
-        </main>
-      </div>
-
-      {error && (
-        <div
-          role="alert"
-          className="fixed bottom-4 left-1/2 z-40 flex max-w-[min(80vw,640px)] -translate-x-1/2 items-start gap-2.5 rounded-lg bg-raised py-2 pl-3 pr-1.5 shadow-pop animate-toast"
-        >
-          <span className="mt-[3px] text-danger">
-            <Icon name="alert" />
+          <span className="mx-1 select-none text-fg">
+            <Logo />
           </span>
-          <span className="py-0.5 break-words min-w-0">{error}</span>
-          <IconButton icon="x" title="Dismiss" onClick={() => setError('')} />
-        </div>
-      )}
+          {workspace && (
+            <button
+              className={`${ghostBtnCls} min-w-0 shrink text-fg`}
+              title={`${workspace.path}\nWorkspace folder and git status`}
+              onClick={openWorkspace}
+            >
+              <span className="truncate">{folderName(workspace.path)}</span>
+              {workspace.git.repo && (
+                <span className="shrink-0 text-xs tabular-nums text-muted">
+                  {changeCount > 0 ? `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}` : workspace.git.branch}
+                </span>
+              )}
+            </button>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            <IconButton icon="filePlus" title="New request" onClick={newRequest} />
+            <IconButton icon="search" title={`Go to a request or run a command (${keyLabel(KEYS.quickOpen)})`} onClick={() => setModal('quick')} />
+            <Select
+              bare
+              className="ml-1"
+              selectClassName={envId ? '' : 'text-muted'}
+              value={envId}
+              onChange={(e) => (e.target.value === MANAGE_ENVIRONMENTS ? setModal('env') : setEnvId(e.target.value))}
+              title="Environment"
+              aria-label="Environment"
+            >
+              <option value="">No environment</option>
+              {environments.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+              <option disabled>──────────</option>
+              <option value={MANAGE_ENVIRONMENTS}>Manage environments…</option>
+            </Select>
+          </div>
+        </header>
 
-      {modal === 'quick' && <QuickOpen collections={collections} actions={quickActions} onOpen={openItem} onClose={() => setModal(null)} />}
-      {modal === 'repo' && workspace && (
-        <WorkspaceModal
-          workspace={workspace}
-          hasCollections={collections.length > 0}
-          onClose={() => setModal(null)}
-          onChanged={workspaceChanged}
-        />
-      )}
-      {modal === 'env' && (
-        <EnvModal
-          environments={environments}
-          runtime={runtime}
-          onClearRuntime={() => {
-            setRuntime({});
-            api.clearRuntimeVariables().catch(fail);
-          }}
-          onDone={saveEnvironments}
-        />
-      )}
-      {modal === 'import' && (
-        <ImportModal
-          onClose={() => setModal(null)}
-          onCurl={(request) => {
-            setModal(null);
-            const imported = normalizeReq(request);
-            openPage({ ...blankPage(), request: imported, ...addRequest('', imported) });
-          }}
-        />
-      )}
-      {protoCollection && (
-        <ProtoModal
-          collection={protoCollection}
-          workspace={workspace?.path ?? ''}
-          environmentId={envId}
-          environmentName={environments.find((e) => e.id === envId)?.name ?? ''}
-          onClose={() => setProtoFor(null)}
-          onSave={(proto) => {
-            if (!sameProto(protoCollection.proto, proto)) changeCollection(withProto(protoCollection, proto));
-            setProtoFor(null);
-          }}
-        />
-      )}
-      {modal === 'curl' && <CurlModal request={active.request} environmentId={envId} onClose={() => setModal(null)} />}
-    </div>
+        <div className="flex-1 flex min-h-0">
+          <Sidebar
+            width={sidebarWidth}
+            hidden={sidebarHidden}
+            collections={collections}
+            history={history}
+            activeItemId={active.source?.itemId}
+            onOpen={openItem}
+            onOpenHistory={(h) => {
+              const page = { ...blankPage(), request: normalizeReq(h.request) };
+              openPage(page);
+              showRun(page.id, h.id);
+            }}
+            onChange={changeCollection}
+            onMove={moveItems}
+            onDelete={deleteCollection}
+            onProto={(c) => setProtoFor(c.id)}
+            onClearHistory={() => {
+              setHistory([]);
+              api.clearHistory().catch(fail);
+            }}
+            onReload={reload}
+          />
+          {!sidebarHidden && (
+            <ResizeHandle
+              axis="x"
+              label="Sidebar width"
+              onMove={resizeSidebar}
+              onNudge={(d) => resizeSidebar(sidebarWidth + d)}
+              onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+            />
+          )}
+
+          <main className="flex-1 flex flex-col min-w-0">
+            <PageTitle
+              key={active.id}
+              name={active.name}
+              where={whereIs(active)}
+              onRename={(name) => renamePage(active, name)}
+            />
+            <AddressBar
+              key={`bar-${active.id}`}
+              request={active.request}
+              sending={active.sending}
+              onChange={(request) => editRequest(active, request)}
+              onSend={() => send(active)}
+              grpcSource={activeSource.kind}
+              onProtoSettings={() => setProtoFor(active.source?.collectionId ?? null)}
+              onLoadMethods={() => api.grpcMethods(active.request, envId, protoOf(activeSource))}
+              onDescribe={describeMethod}
+              onLocalGrpc={api.grpcLocal}
+            />
+
+            <div ref={pairRef} className={`flex min-h-0 flex-1 ${columns ? '' : 'flex-col'}`}>
+              <div className="min-h-0 min-w-0 shrink-0" style={columns ? { width: `${fitColumns(columnSplit) * 100}%` } : { height: `${split * 100}%` }}>
+                <RequestEditor
+                  key={active.id}
+                  request={active.request}
+                  onChange={(request) => editRequest(active, request)}
+                  grpcSource={activeSource.kind}
+                  onDescribe={describeMethod}
+                />
+              </div>
+              {columns ? (
+                <ResizeHandle
+                  key="columns"
+                  axis="x"
+                  label="Request and response split"
+                  onMove={(x) => {
+                    const rect = pairRef.current?.getBoundingClientRect();
+                    if (rect) resizeColumns((x - rect.left) / rect.width);
+                  }}
+                  onNudge={(d) => resizeColumns(fitColumns(columnSplit) + d / (pairWidth || 1000))}
+                  onReset={() => setColumnSplit(COLUMNS_DEFAULT)}
+                />
+              ) : (
+                <ResizeHandle
+                  key="stacked"
+                  axis="y"
+                  label="Request and response split"
+                  onMove={(y) => {
+                    const rect = pairRef.current?.getBoundingClientRect();
+                    if (rect) resizeSplit((y - rect.top) / rect.height);
+                  }}
+                  onNudge={(d) => resizeSplit(split + d / (pairRef.current?.clientHeight || 600))}
+                  onReset={() => setSplit(SPLIT_DEFAULT)}
+                />
+              )}
+              <div className="min-h-0 min-w-0 flex-1">
+                <ResponseView
+                  key={active.id}
+                  res={active.response}
+                  sending={active.sending}
+                  runs={active.source ? history.filter((h) => h.itemId === active.source!.itemId) : []}
+                  run={active.run}
+                  onRun={(run) => showRun(active.id, run)}
+                />
+              </div>
+            </div>
+          </main>
+        </div>
+
+        {error && (
+          <div
+            role="alert"
+            className="fixed bottom-4 left-1/2 z-40 flex max-w-[min(80vw,640px)] -translate-x-1/2 items-start gap-2.5 rounded-lg bg-raised py-2 pl-3 pr-1.5 shadow-pop animate-toast"
+          >
+            <span className="mt-[3px] text-danger">
+              <Icon name="alert" />
+            </span>
+            <span className="py-0.5 break-words min-w-0">{error}</span>
+            <IconButton icon="x" title="Dismiss" onClick={() => setError('')} />
+          </div>
+        )}
+
+        {modal === 'quick' && <QuickOpen collections={collections} actions={quickActions} onOpen={openItem} onClose={() => setModal(null)} />}
+        {modal === 'repo' && workspace && (
+          <WorkspaceModal
+            workspace={workspace}
+            hasCollections={collections.length > 0}
+            onClose={() => setModal(null)}
+            onChanged={workspaceChanged}
+          />
+        )}
+        {modal === 'env' && (
+          <EnvModal
+            environments={environments}
+            runtime={runtime}
+            onClearRuntime={() => {
+              setRuntime({});
+              api.clearRuntimeVariables().catch(fail);
+            }}
+            onDone={saveEnvironments}
+          />
+        )}
+        {modal === 'import' && (
+          <ImportModal
+            onClose={() => setModal(null)}
+            onCurl={(request) => {
+              setModal(null);
+              const imported = normalizeReq(request);
+              openPage({ ...blankPage(), request: imported, ...addRequest('', imported) });
+            }}
+          />
+        )}
+        {protoCollection && (
+          <ProtoModal
+            collection={protoCollection}
+            workspace={workspace?.path ?? ''}
+            environmentId={envId}
+            environmentName={environments.find((e) => e.id === envId)?.name ?? ''}
+            onClose={() => setProtoFor(null)}
+            onSave={(proto) => {
+              if (!sameProto(protoCollection.proto, proto)) changeCollection(withProto(protoCollection, proto));
+              setProtoFor(null);
+            }}
+          />
+        )}
+        {modal === 'curl' && <CurlModal request={active.request} environmentId={envId} onClose={() => setModal(null)} />}
+      </div>
+    </VariablesContext>
   );
 }
 

@@ -73,6 +73,22 @@ export function folderPath(items: Item[], id: string): string[] | undefined {
   }
 }
 
+// The collection and folders that hold item id, outermost first; empty when it is in none of them.
+export function ancestorIds(collections: { id: string; items: Item[] }[], id: string): string[] {
+  const walk = (items: Item[]): string[] | undefined => {
+    for (const item of items) {
+      if (item.id === id) return [];
+      const below = walk(item.items ?? []);
+      if (below) return [item.id, ...below];
+    }
+  };
+  for (const c of collections) {
+    const below = walk(c.items);
+    if (below) return [c.id, ...below];
+  }
+  return [];
+}
+
 // base, or base followed by the first number that no item at this level is called yet.
 export function freeName(items: Item[], base: string): string {
   const taken = new Set(items.map((i) => i.name.toLowerCase()));

@@ -8,6 +8,9 @@ type Props = {
   secrets?: boolean;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  // Shown when the pointer rests on the column headings.
+  keyHint?: string;
+  valueHint?: string;
 };
 
 // Shared by the grids (here and in TestsEditor): rows are separated by hairlines only, no cell boxes.
@@ -53,7 +56,7 @@ export function ListEditor(p: { rows: string[]; onChange: (rows: string[]) => vo
 }
 
 // Always shows one blank row at the end; typing into it adds a row.
-export function KVEditor({ rows, onChange, toggle = true, secrets = false, keyPlaceholder = 'Key', valuePlaceholder = 'Value' }: Props) {
+export function KVEditor({ rows, onChange, toggle = true, secrets = false, keyPlaceholder = 'Key', valuePlaceholder = 'Value', keyHint, valueHint }: Props) {
   const all = [...rows, { key: '', value: '', enabled: true }];
   const set = (i: number, patch: Partial<KV>) => {
     const next = all.map((row, j) => (j === i ? { ...row, ...patch } : row));
@@ -65,8 +68,12 @@ export function KVEditor({ rows, onChange, toggle = true, secrets = false, keyPl
     <div className="-mx-2">
       <div className={gridHeadCls}>
         {toggle && <span className="w-6 shrink-0" />}
-        <span className="flex-[2] px-2">{keyPlaceholder}</span>
-        <span className="flex-[3] px-2">{valuePlaceholder}</span>
+        <span className={`flex-[2] px-2 ${keyHint ? 'cursor-help' : ''}`} title={keyHint}>
+          {keyPlaceholder}
+        </span>
+        <span className={`flex-[3] px-2 ${valueHint ? 'cursor-help' : ''}`} title={valueHint}>
+          {valuePlaceholder}
+        </span>
         <span className={actionsCls} />
       </div>
       {all.map((row, i) => {

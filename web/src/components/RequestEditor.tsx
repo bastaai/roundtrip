@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { kindOf, METHODS, parseQuery, prettyJson, setKind, setQuery } from '../lib/request';
+import { HINTS } from '../lib/hints';
+import { variableAt } from '../lib/variables';
 import { isBlankMessage, type GrpcSource } from '../lib/proto';
 import type { Auth, Body, GrpcMethodInfo, Kind, Req } from '../types';
+import { JsonEditor } from './JsonEditor';
 import { KVEditor } from './KVEditor';
 import { TestsEditor } from './TestsEditor';
+import { useVariableHover } from './Variables';
 import { btnCls, Count, Dot, fieldCls, ghostBtnCls, inputCls, keyLabel, KEYS, methodColor, primaryBtnCls, Segmented, Select, Spinner, Tabs } from './ui';
 
 type BarProps = {
@@ -16,6 +20,8 @@ type BarProps = {
   onLoadMethods: () => Promise<string[]>;
   // Message types and an example message for a method of this request's server.
   onDescribe: (method: string) => Promise<GrpcMethodInfo>;
+  // The address of a gRPC server listening locally on the usual port, or "".
+  onLocalGrpc: () => Promise<string>;
 };
 
 type TabId = 'params' | 'headers' | 'auth' | 'body' | 'tests' | 'docs';
@@ -25,8 +31,42 @@ const textareaCls = `${fieldCls} flex-1 min-h-24 py-1.5 font-mono text-xs resize
 const KIND_COLOR: Record<Kind, string> = { http: '', graphql: 'text-m-graphql', grpc: 'text-m-grpc' };
 
 // Where the round trip starts: method, address and Send in one field across the whole main area.
-export function AddressBar({ request, sending, onChange, onSend, grpcSource, onProtoSettings, onLoadMethods, onDescribe }: BarProps) {
+export function AddressBar({ request, sending, onChange, onSend, grpcSource, onProtoSettings, onLoadMethods, onDescribe, onLocalGrpc }: BarProps) {
   const kind = kindOf(request);
+  // {{variables}} in the address show their value on hover. The text is monospaced,
+  // so the character under the pointer follows from one character's width.
+  const hover = useVariableHover();
+  const frame = useRef<HTMLDivElement>(null);
+  const urlInput = useRef<HTMLInputElement>(null);
+  const onUrlMouseMove = (e: React.MouseEvent) => {
+    const input = urlInput.current;
+    if (hover.busy(e) || !input || !frame.current) return;
+    const style = getComputedStyle(input);
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.font = style.font;
+    const width = ctx.measureText('0').width;
+    const box = input.getBoundingClientRect();
+    const left = box.left + parseFloat(style.paddingLeft) - input.scrollLeft;
+    const found = e.target === input ? variableAt(request.url, Math.floor((e.clientX - left) / width)) : undefined;
+    if (!found) return hover.hideSoon();
+    const outer = frame.current.getBoundingClientRect();
+    hover.show({ name: found.name, top: outer.height + 4, left: left - outer.left + found.start * width });
+  };
+  // A gRPC request with no address yet gets the local server's, when one is running.
+  const latest = useRef(request);
+  latest.current = request;
+  const noAddress = kind === 'grpc' && !request.url.trim();
+  useEffect(() => {
+    if (!noAddress) return;
+    onLocalGrpc().then(
+      (url) => {
+        const now = latest.current;
+        if (url && kindOf(now) === 'grpc' && !now.url.trim()) onChange({ ...now, url });
+      },
+      () => {},
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noAddress]);
   // One menu for the HTTP methods and the other two protocols.
   const verb = kind === 'http' ? request.method : kind;
   const chooseVerb = (v: string) => {
@@ -48,7 +88,11 @@ export function AddressBar({ request, sending, onChange, onSend, grpcSource, onP
   return (
     <div className="shrink-0 border-b border-line">
       <div className="flex items-center px-3 pb-3 pt-2.5">
-        <div className="flex h-9 min-w-0 flex-1 items-stretch rounded-lg border border-line bg-raised p-[3px] transition-[border-color,box-shadow] duration-100 hover:border-line-strong focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/25">
+        <div
+          ref={frame}
+          onMouseMove={onUrlMouseMove}
+          onMouseLeave={hover.hideSoon}
+          className="relative flex h-9 min-w-0 flex-1 items-stretch rounded-lg border border-line bg-raised p-[3px] transition-[border-color,box-shadow] duration-100 hover:border-line-strong focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/25">
           <Select
             bare
             className="shrink-0"
@@ -66,6 +110,7 @@ export function AddressBar({ request, sending, onChange, onSend, grpcSource, onP
             <option value="grpc">gRPC</option>
           </Select>
           <input
+            ref={urlInput}
             autoFocus
             className="min-w-0 flex-1 bg-transparent px-2.5 font-mono text-[13px] outline-none placeholder:font-sans placeholder:text-faint"
             aria-label={kind === 'grpc' ? 'Server address' : 'URL'}
@@ -81,6 +126,7 @@ export function AddressBar({ request, sending, onChange, onSend, grpcSource, onP
             onChange={(e) => onChange({ ...request, url: e.target.value })}
             onKeyDown={(e) => e.key === 'Enter' && onSend()}
           />
+          {hover.popover}
           <button className={`${primaryBtnCls} h-full w-[72px] rounded-[5px]`} disabled={sending} onClick={onSend} title={`Send (${keyLabel(KEYS.send)})`}>
             {sending ? <Spinner size={13} /> : 'Send'}
           </button>
@@ -126,21 +172,36 @@ export function RequestEditor({
     }
   };
   const kind = kindOf(request);
+  // The method's enum fields, so the message editor can offer their values.
+  const [described, setDescribed] = useState<{ method: string; info: GrpcMethodInfo }>();
+  useEffect(() => {
+    const method = request.method.trim();
+    if (kind !== 'grpc' || !/^[^/]+\/[^/]+$/.test(method) || described?.method === method) return;
+    const timer = setTimeout(() => {
+      onDescribe(method).then(
+        (info) => setDescribed({ method, info }),
+        () => {},
+      );
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, request.method, grpcSource]);
+  const enums = described?.method === request.method.trim() ? (described.info.enums ?? []) : (example.info?.enums ?? []);
   const params = parseQuery(request.url);
   const count = (n: number) => n > 0 && <Count n={n} />;
   const dot = (on: boolean) => on && <Dot />;
   const setBody = (body: Body) => onChange({ ...request, body });
 
-  const headersTab = { id: 'headers' as const, label: <>{kind === 'grpc' ? 'Metadata' : 'Headers'}{count(request.headers.filter((h) => h.enabled).length)}</> };
-  const authTab = { id: 'auth' as const, label: <>Auth{dot(request.auth.type !== 'none')}</> };
-  const testsTab = { id: 'tests' as const, label: <>Tests{count(request.tests.length + request.extract.length)}</> };
-  const docsTab = { id: 'docs' as const, label: <>Docs{dot(!!request.docs?.trim())}</> };
-  const tabs: { id: TabId; label: React.ReactNode }[] =
+  const headersTab = { id: 'headers' as const, title: kind === 'grpc' ? HINTS.metadata : HINTS.headers, label: <>{kind === 'grpc' ? 'Metadata' : 'Headers'}{count(request.headers.filter((h) => h.enabled).length)}</> };
+  const authTab = { id: 'auth' as const, title: HINTS.auth, label: <>Auth{dot(request.auth.type !== 'none')}</> };
+  const testsTab = { id: 'tests' as const, title: HINTS.tests, label: <>Tests{count(request.tests.length + request.extract.length)}</> };
+  const docsTab = { id: 'docs' as const, title: HINTS.docs, label: <>Docs{dot(!!request.docs?.trim())}</> };
+  const tabs: { id: TabId; label: React.ReactNode; title?: string }[] =
     kind === 'grpc'
-      ? [{ id: 'body', label: 'Message' }, headersTab, authTab, testsTab, docsTab]
+      ? [{ id: 'body', label: 'Message', title: HINTS.message }, headersTab, authTab, testsTab, docsTab]
       : kind === 'graphql'
-        ? [{ id: 'body', label: 'Query' }, headersTab, authTab, testsTab, docsTab]
-        : [{ id: 'params', label: <>Params{count(params.length)}</> }, headersTab, authTab, { id: 'body', label: <>Body{dot(request.body.mode !== 'none')}</> }, testsTab, docsTab];
+        ? [{ id: 'body', label: 'Query', title: HINTS.query }, headersTab, authTab, testsTab, docsTab]
+        : [{ id: 'params', label: <>Params{count(params.length)}</>, title: HINTS.params }, headersTab, authTab, { id: 'body', label: <>Body{dot(request.body.mode !== 'none')}</>, title: HINTS.body }, testsTab, docsTab];
   const current = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
@@ -170,6 +231,8 @@ export function RequestEditor({
             rows={params}
             onChange={(rows) => onChange({ ...request, url: setQuery(request.url, rows) })}
             keyPlaceholder="Query param"
+            keyHint={HINTS.paramKey}
+            valueHint={HINTS.paramValue}
           />
         )}
         {current === 'headers' && (
@@ -177,6 +240,8 @@ export function RequestEditor({
             rows={request.headers}
             onChange={(headers) => onChange({ ...request, headers })}
             keyPlaceholder={kind === 'grpc' ? 'Metadata key' : 'Header'}
+            keyHint={kind === 'grpc' ? HINTS.metadataKey : HINTS.headerKey}
+            valueHint={HINTS.headerValue}
           />
         )}
         {current === 'auth' && <AuthEditor auth={request.auth} grpc={kind === 'grpc'} onChange={(auth) => onChange({ ...request, auth })} />}
@@ -184,7 +249,9 @@ export function RequestEditor({
         {current === 'body' && kind === 'graphql' && (
           <div className="flex h-full flex-col gap-3 @2xl:flex-row">
             <label className="flex flex-col gap-1.5 flex-[3] min-w-0">
-              <span className="text-xs font-medium">Query</span>
+              <span className="cursor-help self-start text-xs font-medium" title={HINTS.gqlQuery}>
+                Query
+              </span>
               <textarea
                 className={textareaCls}
                 spellCheck={false}
@@ -194,13 +261,14 @@ export function RequestEditor({
               />
             </label>
             <label className="flex flex-col gap-1.5 flex-[2] min-w-0">
-              <span className="text-xs font-medium">Variables (JSON)</span>
-              <textarea
-                className={textareaCls}
-                spellCheck={false}
+              <span className="cursor-help self-start text-xs font-medium" title={HINTS.gqlVariables}>
+                Variables (JSON)
+              </span>
+              <JsonEditor
+                label="Variables"
                 placeholder={'{\n  "id": "{{userId}}"\n}'}
                 value={request.body.variables ?? ''}
-                onChange={(e) => setBody({ ...request.body, variables: e.target.value })}
+                onChange={(variables) => setBody({ ...request.body, variables })}
               />
             </label>
           </div>
@@ -223,13 +291,12 @@ export function RequestEditor({
                 </span>
               )}
             </div>
-            <textarea
-              className={textareaCls}
-              aria-label="Message"
-              spellCheck={false}
+            <JsonEditor
+              label="Message"
               placeholder={'{\n  "field": "value"\n}'}
+              enums={enums}
               value={request.body.raw}
-              onChange={(e) => setBody({ ...request.body, raw: e.target.value })}
+              onChange={(raw) => setBody({ ...request.body, raw })}
             />
             <p className="text-muted text-xs leading-relaxed">
               The request message as JSON. Unary calls only. {GRPC_SOURCE[grpcSource].help}
@@ -336,14 +403,18 @@ function GrpcMethod(p: {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
   return (
     <label className="flex items-center gap-3">
-      <span className="w-20 shrink-0 text-muted">{label}</span>
+      <span className="w-20 shrink-0 cursor-help text-muted" title={hint}>
+        {label}
+      </span>
       {children}
     </label>
   );
 }
+
+const AUTH_HINTS: Record<Auth['type'], string> = { none: HINTS.authNone, bearer: HINTS.bearer, basic: HINTS.basic, apikey: HINTS.apikey };
 
 function AuthEditor({ auth, grpc, onChange }: { auth: Auth; grpc: boolean; onChange: (auth: Auth) => void }) {
   const text = (field: 'token' | 'username' | 'password' | 'key' | 'value', placeholder: string) => (
@@ -357,28 +428,36 @@ function AuthEditor({ auth, grpc, onChange }: { auth: Auth; grpc: boolean; onCha
   );
   return (
     <div className="flex flex-col gap-2 max-w-xl">
-      <Field label="Type">
-        <Select className="w-44" value={auth.type} onChange={(e) => onChange({ ...auth, type: e.target.value as Auth['type'] })}>
-          <option value="none">No auth</option>
-          <option value="bearer">Bearer token</option>
-          <option value="basic">Basic auth</option>
-          <option value="apikey">API key</option>
+      <Field label="Type" hint={HINTS.authType}>
+        <Select className="w-44" title={AUTH_HINTS[auth.type]} value={auth.type} onChange={(e) => onChange({ ...auth, type: e.target.value as Auth['type'] })}>
+          <option value="none" title={AUTH_HINTS.none}>
+            No auth
+          </option>
+          <option value="bearer" title={AUTH_HINTS.bearer}>
+            Bearer token
+          </option>
+          <option value="basic" title={AUTH_HINTS.basic}>
+            Basic auth
+          </option>
+          <option value="apikey" title={AUTH_HINTS.apikey}>
+            API key
+          </option>
         </Select>
       </Field>
       {auth.type === 'none' && <p className="text-muted">This request is sent without credentials.</p>}
-      {auth.type === 'bearer' && <Field label="Token">{text('token', '{{token}}')}</Field>}
+      {auth.type === 'bearer' && <Field label="Token" hint={HINTS.token}>{text('token', '{{token}}')}</Field>}
       {auth.type === 'basic' && (
         <>
-          <Field label="Username">{text('username', 'Username')}</Field>
-          <Field label="Password">{text('password', '{{password}}')}</Field>
+          <Field label="Username" hint={HINTS.username}>{text('username', 'Username')}</Field>
+          <Field label="Password" hint={HINTS.password}>{text('password', '{{password}}')}</Field>
         </>
       )}
       {auth.type === 'apikey' && (
         <>
-          <Field label="Key">{text('key', 'X-API-Key')}</Field>
-          <Field label="Value">{text('value', '{{apiKey}}')}</Field>
+          <Field label="Key" hint={HINTS.apiKeyName}>{text('key', 'X-API-Key')}</Field>
+          <Field label="Value" hint={HINTS.apiKeyValue}>{text('value', '{{apiKey}}')}</Field>
           {!grpc && (
-            <Field label="Add to">
+            <Field label="Add to" hint={HINTS.apiKeyIn}>
               <Select className="w-44" value={auth.in} onChange={(e) => onChange({ ...auth, in: e.target.value as Auth['in'] })}>
                 <option value="header">Header</option>
                 <option value="query">Query params</option>
@@ -397,11 +476,11 @@ function AuthEditor({ auth, grpc, onChange }: { auth: Auth; grpc: boolean; onCha
 }
 
 function BodyEditor({ body, onChange }: { body: Body; onChange: (body: Body) => void }) {
-  const modes: { id: Body['mode']; label: string }[] = [
-    { id: 'none', label: 'None' },
-    { id: 'raw', label: 'Raw' },
-    { id: 'urlencoded', label: 'URL-encoded' },
-    { id: 'form', label: 'Form data' },
+  const modes: { id: Body['mode']; label: string; title: string }[] = [
+    { id: 'none', label: 'None', title: HINTS.bodyNone },
+    { id: 'raw', label: 'Raw', title: HINTS.bodyRaw },
+    { id: 'urlencoded', label: 'URL-encoded', title: HINTS.bodyUrlencoded },
+    { id: 'form', label: 'Form data', title: HINTS.bodyForm },
   ];
   const types = CONTENT_TYPES.includes(body.contentType) || !body.contentType ? CONTENT_TYPES : [...CONTENT_TYPES, body.contentType];
   const pretty = body.mode === 'raw' ? prettyJson(body.raw) : null;
@@ -415,6 +494,7 @@ function BodyEditor({ body, onChange }: { body: Body; onChange: (body: Body) => 
             <Select
               className="w-40 @xl:ml-auto"
               aria-label="Content type"
+              title={HINTS.contentType}
               value={body.contentType}
               onChange={(e) => onChange({ ...body, contentType: e.target.value })}
             >
@@ -428,7 +508,10 @@ function BodyEditor({ body, onChange }: { body: Body; onChange: (body: Body) => 
           </>
         )}
       </div>
-      {body.mode === 'raw' && (
+      {body.mode === 'raw' && body.contentType.includes('json') && (
+        <JsonEditor label="Request body" placeholder='{"hello": "{{name}}"}' value={body.raw} onChange={(raw) => onChange({ ...body, raw })} />
+      )}
+      {body.mode === 'raw' && !body.contentType.includes('json') && (
         <textarea
           className={textareaCls}
           aria-label="Request body"
@@ -439,7 +522,13 @@ function BodyEditor({ body, onChange }: { body: Body; onChange: (body: Body) => 
         />
       )}
       {(body.mode === 'urlencoded' || body.mode === 'form') && (
-        <KVEditor rows={body.form} onChange={(form) => onChange({ ...body, form })} keyPlaceholder="Field" />
+        <KVEditor
+          rows={body.form}
+          onChange={(form) => onChange({ ...body, form })}
+          keyPlaceholder="Field"
+          keyHint={HINTS.formKey}
+          valueHint={HINTS.formValue}
+        />
       )}
       {body.mode === 'none' && <p className="text-muted">This request has no body.</p>}
     </div>
